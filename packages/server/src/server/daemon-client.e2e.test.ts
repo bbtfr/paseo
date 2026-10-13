@@ -158,7 +158,9 @@ test("DaemonClient uploads file bytes to daemon temp storage", async () => {
     });
 
     const uploadId = result.file?.id ?? "";
-    expect(uploadId).toMatch(/^upload_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    expect(uploadId).toMatch(
+      /^upload_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
     expect(result).toEqual({
       requestId: "req-upload-e2e",
       file: {
