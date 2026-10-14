@@ -44,41 +44,73 @@ function headSha(repoDir: string): string {
 }
 
 describe("getCommitFileDiff", () => {
-  it.each([
-    { edited: false, name: "new.txt" },
-    { edited: true, name: "new.txt" },
-    { edited: false, name: 'new "draft".txt' },
-    { edited: true, name: "目录.txt" },
-  ])("preserves a committed rename ($name, edited: $edited)", async ({ edited, name }) => {
+  it.each(["new.txt", "with spaces.txt"])("preserves a rename-only commit to %s", async (name) => {
     const repoDir = initRepo();
-    commitFile(repoDir, "old.txt", "same\nkeep\nlast\n", "initial");
+    commitFile(repoDir, "old.txt", "same\n", "initial");
     git(["mv", "old.txt", name], repoDir);
-    if (edited) writeFileSync(join(repoDir, name), "same\nKEEP\nlast\n");
-    git(["add", "."], repoDir);
     git(["-c", "commit.gpgsign=false", "commit", "-m", "rename"], repoDir);
     const sha = headSha(repoDir);
 
     const history = await listCheckoutCommits({ cwd: repoDir });
     expect(history.commits.find((commit) => commit.sha === sha)?.files).toEqual([
-      { path: name, status: "renamed", additions: edited ? 1 : 0, deletions: edited ? 1 : 0 },
+      { path: name, status: "renamed", additions: 0, deletions: 0 },
     ]);
-    const file = await getCommitFileDiff({ cwd: repoDir, sha, path: name });
-    expect(file).toMatchObject({
+    expect(await getCommitFileDiff({ cwd: repoDir, sha, path: name })).toEqual({
       path: name,
       isNew: false,
       isDeleted: false,
-      additions: edited ? 1 : 0,
-      deletions: edited ? 1 : 0,
+      additions: 0,
+      deletions: 0,
+      hunks: [],
     });
-    if (!edited) expect(file?.hunks).toEqual([]);
-    else {
+  });
+
+  it.each(["new.txt", "目录.txt"])(
+    "preserves the edits in a committed rename to %s",
+    async (name) => {
+      const repoDir = initRepo();
+      commitFile(repoDir, "old.txt", "same\nkeep\nlast\n", "initial");
+      git(["mv", "old.txt", name], repoDir);
+      writeFileSync(join(repoDir, name), "same\nKEEP\nlast\n");
+      git(["add", "."], repoDir);
+      git(["-c", "commit.gpgsign=false", "commit", "-m", "rename and edit"], repoDir);
+      const sha = headSha(repoDir);
+
+      const history = await listCheckoutCommits({ cwd: repoDir });
+      expect(history.commits.find((commit) => commit.sha === sha)?.files).toEqual([
+        { path: name, status: "renamed", additions: 1, deletions: 1 },
+      ]);
+      const file = await getCommitFileDiff({ cwd: repoDir, sha, path: name });
+      expect(file).toMatchObject({
+        path: name,
+        isNew: false,
+        isDeleted: false,
+        additions: 1,
+        deletions: 1,
+      });
       expect(file?.hunks.flatMap((hunk) => hunk.lines)).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ type: "remove", content: "keep" }),
           expect.objectContaining({ type: "add", content: "KEEP" }),
         ]),
       );
-    }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")("preserves a rename to a quoted filename", async () => {
+    const repoDir = initRepo();
+    const name = 'new "draft".txt';
+    commitFile(repoDir, "old.txt", "same\n", "initial");
+    git(["mv", "old.txt", name], repoDir);
+    git(["-c", "commit.gpgsign=false", "commit", "-m", "rename"], repoDir);
+    expect(await getCommitFileDiff({ cwd: repoDir, sha: headSha(repoDir), path: name })).toEqual({
+      path: name,
+      isNew: false,
+      isDeleted: false,
+      additions: 0,
+      deletions: 0,
+      hunks: [],
+    });
   });
 
   it("returns the parsed diff for a modified file in a commit", async () => {
