@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "fs"
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, describe, expect, it } from "vitest";
-import { getCommitFileDiff } from "./checkout-git.js";
+import { getCommitFileDiff, listCheckoutCommits } from "./checkout-git.js";
 
 const tempDirs: string[] = [];
 
@@ -44,6 +44,43 @@ function headSha(repoDir: string): string {
 }
 
 describe("getCommitFileDiff", () => {
+  it.each([
+    { edited: false, name: "new.txt" },
+    { edited: true, name: "new.txt" },
+    { edited: false, name: 'new "draft".txt' },
+    { edited: true, name: "目录.txt" },
+  ])("preserves a committed rename ($name, edited: $edited)", async ({ edited, name }) => {
+    const repoDir = initRepo();
+    commitFile(repoDir, "old.txt", "same\nkeep\nlast\n", "initial");
+    git(["mv", "old.txt", name], repoDir);
+    if (edited) writeFileSync(join(repoDir, name), "same\nKEEP\nlast\n");
+    git(["add", "."], repoDir);
+    git(["-c", "commit.gpgsign=false", "commit", "-m", "rename"], repoDir);
+    const sha = headSha(repoDir);
+
+    const history = await listCheckoutCommits({ cwd: repoDir });
+    expect(history.commits.find((commit) => commit.sha === sha)?.files).toEqual([
+      { path: name, status: "renamed", additions: edited ? 1 : 0, deletions: edited ? 1 : 0 },
+    ]);
+    const file = await getCommitFileDiff({ cwd: repoDir, sha, path: name });
+    expect(file).toMatchObject({
+      path: name,
+      isNew: false,
+      isDeleted: false,
+      additions: edited ? 1 : 0,
+      deletions: edited ? 1 : 0,
+    });
+    if (!edited) expect(file?.hunks).toEqual([]);
+    else {
+      expect(file?.hunks.flatMap((hunk) => hunk.lines)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ type: "remove", content: "keep" }),
+          expect.objectContaining({ type: "add", content: "KEEP" }),
+        ]),
+      );
+    }
+  });
+
   it("returns the parsed diff for a modified file in a commit", async () => {
     const repoDir = initRepo();
     commitFile(repoDir, "foo.txt", "a\nb\nc\n", "initial");
@@ -87,6 +124,59 @@ describe("getCommitFileDiff", () => {
     const file = await getCommitFileDiff({ cwd: repoDir, sha, path: "does-not-exist.txt" });
 
     expect(file).toBeNull();
+  });
+
+  it("does not follow an unchanged file back to an earlier commit", async () => {
+    const repoDir = initRepo();
+    commitFile(repoDir, "foo.txt", "same\n", "initial");
+    commitFile(repoDir, "other.txt", "other\n", "unrelated change");
+    expect(
+      await getCommitFileDiff({ cwd: repoDir, sha: headSha(repoDir), path: "foo.txt" }),
+    ).toBeNull();
+  });
+
+  it("returns the added file in a root commit and the deleted file in its deletion commit", async () => {
+    const repoDir = initRepo();
+    commitFile(repoDir, "foo.txt", "same\n", "initial");
+    expect(
+      await getCommitFileDiff({ cwd: repoDir, sha: headSha(repoDir), path: "foo.txt" }),
+    ).toMatchObject({
+      isNew: true,
+      isDeleted: false,
+      additions: 1,
+      deletions: 0,
+    });
+    git(["rm", "foo.txt"], repoDir);
+    git(["-c", "commit.gpgsign=false", "commit", "-m", "delete"], repoDir);
+    expect(
+      await getCommitFileDiff({ cwd: repoDir, sha: headSha(repoDir), path: "foo.txt" }),
+    ).toMatchObject({
+      isNew: false,
+      isDeleted: true,
+      additions: 0,
+      deletions: 1,
+    });
+  });
+
+  it("preserves a rename introduced by a merge against its first parent", async () => {
+    const repoDir = initRepo();
+    commitFile(repoDir, "old.txt", "same\n", "initial");
+    git(["checkout", "-b", "feature"], repoDir);
+    git(["mv", "old.txt", "new.txt"], repoDir);
+    git(["-c", "commit.gpgsign=false", "commit", "-m", "rename"], repoDir);
+    git(["checkout", "main"], repoDir);
+    commitFile(repoDir, "main.txt", "main\n", "advance main");
+    git(["merge", "--no-ff", "feature", "-m", "merge feature"], repoDir);
+    expect(
+      await getCommitFileDiff({ cwd: repoDir, sha: headSha(repoDir), path: "new.txt" }),
+    ).toMatchObject({
+      path: "new.txt",
+      isNew: false,
+      isDeleted: false,
+      additions: 0,
+      deletions: 0,
+      hunks: [],
+    });
   });
 
   it("returns a merge commit diff against its first parent", async () => {

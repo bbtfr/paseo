@@ -2666,7 +2666,19 @@ export async function getCommitFileDiff({
 }): Promise<ParsedDiffFile | null> {
   const worktreeRoot = await requireGitWorktreeRoot(cwd);
   const { stdout } = await runGitCommand(
-    ["show", sha, "--format=", "--diff-merges=first-parent", ...GIT_PATCH_FORMAT_ARGS, "--", path],
+    // Follow the destination back to its source before applying the path filter,
+    // otherwise Git presents a rename as an added file. Match history's -M detection.
+    [
+      "show",
+      sha,
+      "--format=",
+      "--diff-merges=first-parent",
+      "--follow",
+      "-M",
+      ...GIT_PATCH_FORMAT_ARGS,
+      "--",
+      path,
+    ],
     {
       cwd: worktreeRoot,
       envOverlay: READ_ONLY_GIT_ENV,
