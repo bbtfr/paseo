@@ -1380,7 +1380,7 @@ function TimelineSyncErrorCallout({
 }
 
 /**
- * What the composer's model and thinking controls would show, as one line, for an agent shown
+ * What the composer's controls and context meter would show, as one line, for an agent shown
  * without its composer.
  */
 function SheetAgentFacts({ serverId, agentId }: { serverId: string; agentId: string }) {
@@ -1395,6 +1395,10 @@ function SheetAgentFacts({ serverId, agentId }: { serverId: string; agentId: str
             configuredModelId: current.model ?? null,
             runtimeThinkingOptionId: current.runtimeInfo?.thinkingOptionId ?? null,
             explicitThinkingOptionId: current.thinkingOptionId ?? null,
+            availableModes: current.availableModes,
+            currentModeId: current.currentModeId,
+            contextWindowUsedTokens: current.lastUsage?.contextWindowUsedTokens ?? null,
+            contextWindowMaxTokens: current.lastUsage?.contextWindowMaxTokens ?? null,
           }
         : null;
     }),

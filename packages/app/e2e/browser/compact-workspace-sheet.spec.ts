@@ -78,9 +78,10 @@ test("compact opens files and subagents in a sheet, leaving the tabs for agents"
       await expect(childSheet).toBeVisible();
       await expectSheetAtSnap(page, child.title);
       await expect(childSheet.getByRole("textbox", { name: "Message agent..." })).toHaveCount(0);
-      // The composer's model and thinking stand in for it, resolved the same way.
+      // The composer's model, thinking, and mode stand in for it, resolved the same way. An idle
+      // seeded agent has no context usage yet.
       await expect(childSheet.getByTestId("agent-pane-subtitle")).toHaveText(
-        "Ten second stream · Low",
+        "Ten second stream · Low · Load test",
       );
       await expectOpenTabCount(page, 1);
     });
