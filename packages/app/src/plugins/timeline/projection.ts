@@ -1,5 +1,6 @@
 import type { AgentTimelineItem, ToolCallTimelineItem } from "@getpaseo/protocol/agent-types";
 import {
+  createUserMessage,
   reduceStreamUpdate,
   type AgentToolCallData,
   type PluginTimelineStreamItem,
@@ -175,37 +176,49 @@ function projectRetainedSourceItem(
   if (raw.type === "tool_call" && raw.status === "running") phase = "streaming";
   else if (raw.type === "assistant_message" || raw.type === "reasoning") phase = assistantPhase;
   const output = transform({ item: cloneAndFreeze(raw), phase, sourceId: item.id });
-  return output === undefined
-    ? {
-        claimed: false,
-        items: event
-          ? reduceStreamUpdate([], event, item.timestamp, {
-              source: "canonical",
-              timelineCursor: item.timelineCursor,
-            }).map((projected) => {
-              if (projected.kind === item.kind) projected.id = item.id;
-              return projected;
-            })
-          : [],
-      }
-    : {
-        claimed: true,
-        items: output.map(
-          (entry): PluginTimelineStreamItem => ({
-            kind: "plugin",
-            id: `${entry.pluginId}/${entry.id}`,
-            sourceId: item.id,
-            timestamp: item.timestamp,
-            timelineCursor: item.timelineCursor,
-            turnId: item.turnId,
-            pluginId: entry.pluginId,
-            pluginItemId: entry.id,
-            itemKind: entry.kind,
-            version: entry.version,
-            data: entry.data,
-          }),
-        ),
-      };
+  if (output === undefined) {
+    let native = event
+      ? reduceStreamUpdate([], event, item.timestamp, {
+          source: "canonical",
+          timelineCursor: item.timelineCursor,
+        }).map((projected) => {
+          if (projected.kind === item.kind) projected.id = item.id;
+          return projected;
+        })
+      : [];
+    // Canonical acknowledgements deliberately retain local attachment metadata.
+    // Rebuilding just from the provider text would discard those attachments,
+    // including the entire row for an attachment-only submission.
+    if (
+      event?.item.type === "user_message" &&
+      item.kind === "user_message" &&
+      (item.images?.length || item.attachments?.length)
+    ) {
+      const user =
+        native.find((entry) => entry.kind === "user_message") ??
+        createUserMessage({ ...item, text: "" });
+      native = [{ ...user, images: item.images, attachments: item.attachments }];
+    }
+    return { claimed: false, items: native };
+  }
+  return {
+    claimed: true,
+    items: output.map(
+      (entry): PluginTimelineStreamItem => ({
+        kind: "plugin",
+        id: `${entry.pluginId}/${entry.id}`,
+        sourceId: item.id,
+        timestamp: item.timestamp,
+        timelineCursor: item.timelineCursor,
+        turnId: item.turnId,
+        pluginId: entry.pluginId,
+        pluginItemId: entry.id,
+        itemKind: entry.kind,
+        version: entry.version,
+        data: entry.data,
+      }),
+    ),
+  };
 }
 
 function shouldMergeNativeSourceProjection(

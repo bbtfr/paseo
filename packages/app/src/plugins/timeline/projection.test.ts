@@ -197,6 +197,43 @@ describe("plugin timeline source projection", () => {
     expect(state[0]?.timelineSource?.item).toEqual(raw);
   });
 
+  it.each(["Prompt with image", ""])(
+    "preserves local attachments in native source fallback: %j",
+    (text) => {
+      const raw: AgentTimelineItem = {
+        type: "user_message",
+        text: "provider envelope",
+        clientMessageId: "submission",
+      };
+      const image = {
+        id: "image",
+        mimeType: "image/png",
+        storageType: "web-indexeddb" as const,
+        storageKey: "image",
+        createdAt: 1,
+      };
+      const row: StreamItem = {
+        kind: "user_message",
+        id: "submission",
+        clientMessageId: "submission",
+        text,
+        timestamp,
+        images: [image],
+        timelineSource: { item: raw, defaultItem: { ...raw, text }, provider: "mock" },
+      };
+      expect(projectPluginTimelineSourceItems([row], pass)).toMatchObject([
+        { kind: "user_message", id: "submission", text, images: [image] },
+      ]);
+      expect(
+        projectPluginTimelineSourceItems(
+          [{ ...row, timelineSource: { ...row.timelineSource!, defaultItem: null } }],
+          pass,
+        ),
+      ).toEqual([]);
+      expect(projectPluginTimelineSourceItems([row], () => [])).toEqual([]);
+    },
+  );
+
   it("runs source tool transformers before native Todo conversion or hiding", () => {
     const raw: AgentTimelineItem = {
       type: "tool_call",
