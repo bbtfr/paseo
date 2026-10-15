@@ -2,7 +2,8 @@ import { PluginClientStateProvider } from "@getpaseo/plugin/client/host";
 import type { PluginTimelineItemProps } from "@getpaseo/plugin/client";
 import type { PluginTheme } from "@getpaseo/plugin";
 import React, { type ComponentType, useMemo } from "react";
-import { Text } from "react-native";
+import { Text, View } from "react-native";
+import { getToolSequenceBottomSpacing } from "@/agent-stream/spacing";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import { useHostRuntimeClient, useHosts } from "@/runtime/host-runtime";
@@ -72,6 +73,7 @@ function PluginTimelineItemBody({
     host,
     layout,
     timestamp: item.timestamp,
+    ...(item.layout ? { timelineLayout: item.layout } : {}),
     item: {
       type: "plugin",
       kind: item.itemKind,
@@ -93,14 +95,27 @@ function PluginTimelineItemBody({
 const ThemedPluginTimelineItemBody = withUnistyles(PluginTimelineItemBody);
 
 export function PluginTimelineItemView(props: {
+  isLastInToolSequence?: boolean;
   agentId: string;
   item: PluginTimelineStreamItem;
   serverId: string;
 }) {
-  return <ThemedPluginTimelineItemBody {...props} uniProps={pluginThemeMapping} />;
+  const content = <ThemedPluginTimelineItemBody {...props} uniProps={pluginThemeMapping} />;
+  return props.item.layout === "tool" ? (
+    <View
+      testID="plugin-timeline-tool-row"
+      style={props.isLastInToolSequence === false ? styles.toolSpacing : styles.toolLastSpacing}
+    >
+      {content}
+    </View>
+  ) : (
+    content
+  );
 }
 
 const styles = StyleSheet.create((theme) => ({
+  toolSpacing: { marginBottom: getToolSequenceBottomSpacing(false) },
+  toolLastSpacing: { marginBottom: getToolSequenceBottomSpacing(true) },
   unavailable: {
     color: theme.colors.foregroundMuted,
     paddingVertical: theme.spacing[2],

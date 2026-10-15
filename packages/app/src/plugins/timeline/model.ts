@@ -52,6 +52,10 @@ function parseTransformResult(value: unknown): PluginTimelineTransformResult {
     if (!item || typeof item !== "object" || Reflect.get(item, "type") !== "plugin") {
       throw new Error('transformed timeline items must have type "plugin"');
     }
+    const layout = Reflect.get(item, "layout");
+    if (layout !== undefined && layout !== "tool") {
+      throw new Error(`invalid transformed timeline layout: ${String(layout)}`);
+    }
     const kind = Reflect.get(item, "kind");
     const id = Reflect.get(item, "id");
     const version = Reflect.get(item, "version");
@@ -89,6 +93,7 @@ export function transformTimelineItem(
           type: "plugin",
           id: transformedItem.id ?? `${input.sourceId}/${index}`,
           kind: transformedItem.kind,
+          layout: transformedItem.layout,
           version: transformedItem.version,
           data: JSON.parse(JSON.stringify(transformedItem.data)) as PluginTimelineData,
           pluginId: plugin.id,

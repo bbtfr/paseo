@@ -547,3 +547,73 @@ describe("layoutStream", () => {
     },
   );
 });
+
+describe("plugin tool layout", () => {
+  it.each(["web", "android"] as const)(
+    "matches native spacing and sequence boundaries on %s",
+    (platform) => {
+      for (const tail of [false, true]) {
+        for (const expanded of [false, true]) {
+          const preceding = toolCall("before", 1, "turn");
+          const native = toolCall("subject", 2, "turn");
+          const following = toolCall("after", 3, "turn");
+          const notice: StreamItem = {
+            kind: "plugin",
+            id: native.id,
+            timestamp: native.timestamp,
+            turnId: native.turnId,
+            pluginId: "notices",
+            pluginItemId: "notice",
+            itemKind: "notice",
+            version: 1,
+            data: { expanded },
+            layout: "tool",
+          };
+          const make = (subject: StreamItem) =>
+            layoutFor({
+              platform,
+              tail: [preceding],
+              head: [subject, ...(tail ? [] : [following])],
+            });
+          const expected = make(native),
+            actual = make(notice);
+          for (const id of ["before", "subject", ...(tail ? [] : ["after"])]) {
+            const a = findLayoutItem(actual, id),
+              e = findLayoutItem(expected, id);
+            expect({
+              gap: a.gapBelow,
+              sequence: a.toolSequence,
+              last: a.isLastInToolSequence,
+            }).toEqual({ gap: e.gapBelow, sequence: e.toolSequence, last: e.isLastInToolSequence });
+          }
+          expect(findLayoutItem(actual, "subject").isLastInToolSequence).toBe(tail);
+        }
+      }
+    },
+  );
+
+  it("does not join another canonical turn or change generic plugin layout", () => {
+    const before = toolCall("before", 1, "first");
+    const notice: StreamItem = {
+      kind: "plugin",
+      id: "notice",
+      timestamp: timestamp(2),
+      turnId: "second",
+      pluginId: "notices",
+      pluginItemId: "notice",
+      itemKind: "notice",
+      version: 1,
+      data: {},
+      layout: "tool",
+    };
+    const layout = layoutFor({ platform: "web", tail: [before, notice] });
+    expect(findLayoutItem(layout, "before").isLastInToolSequence).toBe(true);
+    expect(findLayoutItem(layout, "notice").toolSequence).toBe("single");
+    const generic = layoutFor({
+      platform: "web",
+      tail: [before, { ...notice, layout: undefined }],
+    });
+    expect(findLayoutItem(generic, "notice").toolSequence).toBe("none");
+    expect(findLayoutItem(generic, "before").gapBelow).toBe(16);
+  });
+});

@@ -802,6 +802,7 @@ export interface CompactionItem {
 }
 
 export interface PluginTimelineStreamItem {
+  layout?: "tool";
   kind: "plugin";
   id: string;
   /** The id of the stream item a timeline transformer replaced; set only by projection. */

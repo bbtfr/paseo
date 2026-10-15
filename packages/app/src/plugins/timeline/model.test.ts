@@ -213,3 +213,34 @@ describe("plugin timeline transforms", () => {
     expect(transformed?.[0]?.id).toBe("summary");
   });
 });
+
+it("retains the tool layout hint and declines unsupported layout hints", () => {
+  for (const layout of ["tool", "unknown"]) {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const transformed = transformTimelineItem({
+      item: toolCall,
+      phase: "complete",
+      sourceId: "tool",
+      plugins: [
+        plugin({
+          id: "layout",
+          transform: () =>
+            ({
+              items: [
+                {
+                  type: "plugin",
+                  kind: "notice",
+                  version: 1,
+                  data: {},
+                  layout,
+                },
+              ],
+            }) as never,
+        }),
+      ],
+    });
+    if (layout === "tool") expect(transformed?.[0]?.layout).toBe("tool");
+    else expect(transformed).toBeUndefined();
+    warn.mockRestore();
+  }
+});

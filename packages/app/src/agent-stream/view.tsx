@@ -892,7 +892,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
           case "plugin":
             return (
-              <PluginTimelineItemView agentId={agentId} item={item} serverId={resolvedServerId} />
+              <PluginTimelineItemView
+                agentId={agentId}
+                item={item}
+                serverId={resolvedServerId}
+                isLastInToolSequence={layoutItem.isLastInToolSequence}
+              />
             );
 
           default:

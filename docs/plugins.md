@@ -577,6 +577,13 @@ Transformers run synchronously and must be deterministic. When several transform
 first one that returns a result owns that source item. Plugin and registration ordering is stable.
 See `plugin-examples/timeline-items` for the complete contract.
 
+A transformer output can set `layout: "tool"` to join native tool/thought/Todo spacing.
+The host owns outer vertical spacing (including the larger space before a turn footer)
+and passes `timelineLayout: "tool"` to the renderer. Render only the row content and
+expanded body, without compensating outer margins. This does not make the row a tool
+call, group it into an Overview tool count, or alter turn boundaries. Omit the field for
+existing generic message spacing. Older clients ignore the hint and omit `timelineLayout`.
+
 A plugin subprocess can also append a canonical plugin row from a server handler:
 
 ```ts

@@ -33,8 +33,16 @@ export function getAssistantBlockSpacing(params: {
 }
 
 const isUserMessageItem = (item?: StreamItem | null) => item?.kind === "user_message";
-const isToolSequenceItem = (item?: StreamItem | null) =>
-  item?.kind === "tool_call" || item?.kind === "thought" || item?.kind === "todo_list";
+export const isToolSequenceItem = (item?: StreamItem | null) =>
+  item?.kind === "tool_call" ||
+  item?.kind === "thought" ||
+  item?.kind === "todo_list" ||
+  (item?.kind === "plugin" && item.layout === "tool");
+
+/** Shared by native badges and host-wrapped plugin tool rows. */
+export function getToolSequenceBottomSpacing(isLastInSequence: boolean): number {
+  return isLastInSequence ? SPACING[4] : SPACING[1];
+}
 
 export function getGapBetweenStreamItems(
   item: StreamItem | null,

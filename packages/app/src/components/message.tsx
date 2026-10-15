@@ -47,6 +47,7 @@ import {
 } from "lucide-react-native";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { ICON_SIZE, type Theme } from "@/styles/theme";
+import { getToolSequenceBottomSpacing } from "@/agent-stream/spacing";
 import { useIsCompactFormFactor } from "@/constants/layout";
 import Animated, {
   Easing,
@@ -1106,10 +1107,10 @@ const expandableBadgeStylesheet = StyleSheet.create((theme) => ({
     marginHorizontal: -13,
   },
   containerSpacing: {
-    marginBottom: theme.spacing[1],
+    marginBottom: getToolSequenceBottomSpacing(false),
   },
   containerLastInSequence: {
-    marginBottom: theme.spacing[4],
+    marginBottom: getToolSequenceBottomSpacing(true),
   },
   pressable: {
     borderRadius: theme.borderRadius.lg,

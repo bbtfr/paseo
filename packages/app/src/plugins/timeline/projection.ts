@@ -109,6 +109,7 @@ function transformSourceItem(
       pluginId: pluginItem.pluginId,
       pluginItemId: pluginItem.id,
       itemKind: pluginItem.kind,
+      layout: pluginItem.layout,
       version: pluginItem.version,
       data: pluginItem.data,
     };

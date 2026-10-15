@@ -82,6 +82,8 @@ export interface PluginAttachmentSourceContribution {
 export type PluginTimelineData = JsonValue;
 
 export interface PluginTimelineItem {
+  /** Opt into native tool-sequence spacing. The host owns outer vertical spacing. */
+  layout?: "tool";
   type: "plugin";
   id?: string;
   kind: string;

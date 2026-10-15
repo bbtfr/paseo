@@ -210,6 +210,8 @@ export type PluginTimelineTransformerContribution<
   : never;
 
 export interface PluginTimelineItemProps<Data = unknown> extends PluginHostProps {
+  /** Present when the host applies tool-sequence spacing; older hosts omit it. */
+  timelineLayout?: "tool";
   agentId: string;
   item: {
     type: "plugin";

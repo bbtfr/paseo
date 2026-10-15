@@ -1,6 +1,6 @@
 import type { TurnTiming } from "@/timeline/turn-time";
 import type { StreamItem } from "@/types/stream";
-import { getAssistantBlockSpacing, getGapBetweenStreamItems } from "./spacing";
+import { getAssistantBlockSpacing, getGapBetweenStreamItems, isToolSequenceItem } from "./spacing";
 import type { StreamFrameChildOrder, StreamStrategy } from "./strategy";
 import { continuesResponse, continuesTurn, isResponseBoundary } from "./turn-membership";
 
@@ -179,12 +179,6 @@ function resolveCompletedFooter(input: {
     index: assistant.index,
     timingByAssistantId: input.timingByAssistantId,
   });
-}
-
-function isToolSequenceItem(
-  item: StreamItem | null,
-): item is Extract<StreamItem, { kind: "tool_call" | "thought" | "todo_list" }> {
-  return item?.kind === "tool_call" || item?.kind === "thought" || item?.kind === "todo_list";
 }
 
 function getToolSequence(input: {

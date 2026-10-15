@@ -152,3 +152,18 @@ describe("plugin timeline projection", () => {
     expect(filtered).toEqual([]);
   });
 });
+
+it("preserves an opt-in tool layout through client projection", () => {
+  const projected = projectPluginTimelineItems([thought("notice", "ready")], () => [
+    {
+      type: "plugin",
+      id: "notice",
+      pluginId: "notifications",
+      kind: "notice",
+      version: 1,
+      data: {},
+      layout: "tool",
+    },
+  ]);
+  expect(projected[0]).toMatchObject({ kind: "plugin", layout: "tool" });
+});
