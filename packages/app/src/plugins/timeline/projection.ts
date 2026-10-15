@@ -1,5 +1,10 @@
 import type { AgentTimelineItem, ToolCallTimelineItem } from "@getpaseo/protocol/agent-types";
-import type { AgentToolCallData, PluginTimelineStreamItem, StreamItem } from "@/types/stream";
+import {
+  reduceStreamUpdate,
+  type AgentToolCallData,
+  type PluginTimelineStreamItem,
+  type StreamItem,
+} from "@/types/stream";
 import type { TimelineItemTransform } from "./model";
 
 type AssistantPhase = "streaming" | "complete";
@@ -142,4 +147,121 @@ export function projectPluginTimelineItems(
     return output;
   });
   return changed ? projected : items;
+}
+
+interface SourceProjection {
+  claimed: boolean;
+  items: StreamItem[];
+}
+const sourceProjectionCache = new WeakMap<
+  TimelineItemTransform,
+  WeakMap<StreamItem, Partial<Record<AssistantPhase, SourceProjection>>>
+>();
+
+function projectRetainedSourceItem(
+  item: StreamItem,
+  source: NonNullable<StreamItem["timelineSource"]>,
+  transform: TimelineItemTransform,
+  assistantPhase: AssistantPhase,
+): SourceProjection {
+  const event = source.defaultItem && {
+    type: "timeline" as const,
+    provider: source.provider,
+    item: source.defaultItem,
+    turnId: item.turnId,
+  };
+  const raw = source.item;
+  let phase: AssistantPhase = "complete";
+  if (raw.type === "tool_call" && raw.status === "running") phase = "streaming";
+  else if (raw.type === "assistant_message" || raw.type === "reasoning") phase = assistantPhase;
+  const output = transform({ item: cloneAndFreeze(raw), phase, sourceId: item.id });
+  return output === undefined
+    ? {
+        claimed: false,
+        items: event
+          ? reduceStreamUpdate([], event, item.timestamp, {
+              source: "canonical",
+              timelineCursor: item.timelineCursor,
+            }).map((projected) => {
+              if (projected.kind === item.kind) projected.id = item.id;
+              return projected;
+            })
+          : [],
+      }
+    : {
+        claimed: true,
+        items: output.map(
+          (entry): PluginTimelineStreamItem => ({
+            kind: "plugin",
+            id: `${entry.pluginId}/${entry.id}`,
+            sourceId: item.id,
+            timestamp: item.timestamp,
+            timelineCursor: item.timelineCursor,
+            turnId: item.turnId,
+            pluginId: entry.pluginId,
+            pluginItemId: entry.id,
+            itemKind: entry.kind,
+            version: entry.version,
+            data: entry.data,
+          }),
+        ),
+      };
+}
+
+function shouldMergeNativeSourceProjection(
+  previous: StreamItem | undefined,
+  next: StreamItem | undefined,
+): boolean {
+  if (!next) return false;
+  if (previous?.kind === "thought" && previous.status === "loading") return true;
+  if (next.kind === "todo_list") return true;
+  if (next.kind === "thought") return previous?.kind === "thought";
+  return (
+    next.kind === "assistant_message" &&
+    previous?.kind === "assistant_message" &&
+    (!next.messageId || next.messageId === previous.messageId)
+  );
+}
+
+export function projectPluginTimelineSourceItems(
+  items: StreamItem[],
+  transform: TimelineItemTransform,
+  assistantPhase: AssistantPhase = "complete",
+): StreamItem[] {
+  let cache = sourceProjectionCache.get(transform);
+  if (!cache) {
+    cache = new WeakMap();
+    sourceProjectionCache.set(transform, cache);
+  }
+  let projected: StreamItem[] = [];
+  for (const item of items) {
+    const source = item.timelineSource;
+    if (!source) {
+      projected.push(item);
+      continue;
+    }
+    let resolved = cache.get(item)?.[assistantPhase];
+    const event = source.defaultItem && {
+      type: "timeline" as const,
+      provider: source.provider,
+      item: source.defaultItem,
+      turnId: item.turnId,
+    };
+    if (!resolved) {
+      resolved = projectRetainedSourceItem(item, source, transform, assistantPhase);
+      cache.set(item, { ...cache.get(item), [assistantPhase]: resolved });
+    }
+    const previous = projected.at(-1);
+    const next = resolved.items[0];
+    const mergeNative = !resolved.claimed && shouldMergeNativeSourceProjection(previous, next);
+    if (mergeNative && event) {
+      projected = reduceStreamUpdate(projected, event, item.timestamp, {
+        source: "canonical",
+        timelineCursor: item.timelineCursor,
+      });
+    } else {
+      projected.push(...resolved.items);
+    }
+  }
+  return projected;
 }

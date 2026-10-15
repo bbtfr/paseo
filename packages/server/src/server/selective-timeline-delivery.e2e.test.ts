@@ -180,6 +180,7 @@ afterEach(async () => {
 async function connect(input: {
   clientId: string;
   selective: boolean;
+  owned?: boolean;
   timelineReplacementInvalidation?: boolean;
   timelineNotifications?: boolean;
   pluginTimelineItems?: boolean;
@@ -194,7 +195,7 @@ async function connect(input: {
       return socket as unknown as WebSocketLike;
     },
     capabilities: {
-      [CLIENT_CAPS.ownedSubscriptions]: false,
+      [CLIENT_CAPS.ownedSubscriptions]: input.owned ?? false,
       [CLIENT_CAPS.selectiveAgentTimeline]: input.selective,
       [CLIENT_CAPS.pluginTimelineItems]: input.pluginTimelineItems ?? false,
       [CLIENT_CAPS.workspaceSetupBlocked]: input.workspaceSetupBlocked ?? false,
@@ -792,3 +793,94 @@ function rewindMessageId(
     throw new Error("Expected rewind target");
   return target.item.messageId;
 }
+
+test("source subscriptions retain filtered inputs without leaking them to native clients", async () => {
+  await daemon.close();
+  const provider = new CompatibilityProvider();
+  daemon = await createTestPaseoDaemon({ isDev: true, agentClients: { mock: provider } });
+  const modern = await connect({ clientId: "timeline-source", selective: true, owned: true });
+  const legacy = await connect({ clientId: "timeline-native", selective: false });
+  const agent = await modern.client.createAgent({
+    provider: "mock",
+    cwd: "/tmp",
+    title: "Source compatibility",
+  });
+  const sourceMessages: SessionOutboundMessage[] = [];
+  const nativeMessages: SessionOutboundMessage[] = [];
+  const source = modern.client.observeTimeline([agent.id], { source: true });
+  const native = modern.client.observeTimeline([agent.id]);
+  source.subscribe({ update: (message) => sourceMessages.push(message) });
+  native.subscribe({ update: (message) => nativeMessages.push(message) });
+  await Promise.all([source.ready, native.ready]);
+  modern.clear();
+  legacy.clear();
+  const hidden = {
+    type: "user_message" as const,
+    messageId: "scheduled-input",
+    text: "<paseo-system>\nSchedule fired\n</paseo-system>",
+  };
+  provider.session.push({ type: "timeline", provider: "mock", item: hidden });
+  provider.session.push({
+    type: "timeline",
+    provider: "mock",
+    item: { type: "user_message", messageId: "human-input", text: "Hello" },
+  });
+  await modern.next(
+    (message) =>
+      message.type === "agent_stream" &&
+      message.payload.event.type === "timeline" &&
+      message.payload.event.item.type === "user_message" &&
+      message.payload.event.item.text === "Hello",
+    "source delivery barrier",
+  );
+  await Promise.all([modern.barrier("source-barrier"), legacy.barrier("native-barrier")]);
+  const timelines = (messages: SessionOutboundMessage[]) =>
+    messages.flatMap((message) =>
+      message.type === "agent_stream" && message.payload.event.type === "timeline"
+        ? [message.payload.event]
+        : [],
+    );
+  expect(timelines(sourceMessages)).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ item: hidden, source: { defaultItem: null } }),
+    ]),
+  );
+  expect(
+    timelines(nativeMessages).some(
+      (event) => event.item.type === "user_message" && event.item.text.includes("paseo-system"),
+    ),
+  ).toBe(false);
+  expect(
+    timelines(legacy.messages).some(
+      (event) => event.item.type === "user_message" && event.item.text.includes("paseo-system"),
+    ),
+  ).toBe(false);
+  expect(timelines(nativeMessages).every((event) => event.source === undefined)).toBe(true);
+  const [rawPage, nativePage] = await Promise.all([
+    modern.client.fetchAgentTimelineSource(agent.id),
+    legacy.client.fetchAgentTimeline(agent.id),
+  ]);
+  expect(
+    rawPage.entries.some(
+      (entry) =>
+        entry.item.type === "user_message" &&
+        entry.item.messageId === "scheduled-input" &&
+        entry.source?.defaultItem === null,
+    ),
+  ).toBe(true);
+  expect(
+    nativePage.entries.some(
+      (entry) => entry.item.type === "user_message" && entry.item.messageId === "scheduled-input",
+    ),
+  ).toBe(false);
+  await source.release();
+  const count = sourceMessages.length;
+  provider.session.push({
+    type: "timeline",
+    provider: "mock",
+    item: { type: "user_message", text: "after release" },
+  });
+  await modern.barrier("release-barrier");
+  expect(sourceMessages).toHaveLength(count);
+  await native.release();
+});

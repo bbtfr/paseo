@@ -11,6 +11,7 @@ function connection(
     broadcasts?: boolean;
     browserHost?: { hostKind: string; supportedCommands: string[] };
     acknowledgeTimelineReads?: boolean;
+    timelineSource?: boolean;
   } = {},
 ) {
   const sent: Array<{
@@ -22,6 +23,7 @@ function connection(
       agentIds?: string[];
       events?: string[];
       subscriptionId?: string;
+      source?: boolean;
     };
   }> = [];
   let receive = (_data: unknown) => {};
@@ -45,6 +47,7 @@ function connection(
                 features: {
                   ...(options.ownedSubscriptions === false ? {} : { ownedSubscriptions: true }),
                   workspaceMultiplicity: options.workspaceMultiplicity ?? true,
+                  timelineSource: options.timelineSource,
                   selectiveAgentTimeline: !options.broadcasts,
                   explicitEventSubscriptions: !options.broadcasts,
                 },
@@ -1023,6 +1026,60 @@ test("subscribeFile returns its initial version without calling the change callb
     h.receive({ type: "fs.file.update", payload: { subscriptionId: "file-owner", version } });
     expect(changes).toEqual([version]);
     await file.unsubscribe();
+  } finally {
+    await h.client.close();
+  }
+});
+
+test("timeline source capability is required without changing native subscriptions", async () => {
+  const h = connection();
+  try {
+    const ready = h.client.connect();
+    h.open();
+    await ready;
+    expect(h.client.supportsTimelineSource).toBe(false);
+    expect(() => h.client.subscribeAgentTimelineSource("agent", () => {})).toThrow(
+      "updated Paseo host",
+    );
+    await expect(h.client.fetchAgentTimelineSource("agent")).rejects.toThrow("updated Paseo host");
+    const native = h.client.subscribeAgentTimeline("agent", () => {});
+    await native.ready;
+    native();
+    expect(h.sent.some((frame) => frame.message?.source === true)).toBe(false);
+  } finally {
+    await h.client.close();
+  }
+});
+
+test("timeline source subscriptions and reads retain their mode across reconnect", async () => {
+  const h = connection({ timelineSource: true });
+  try {
+    const ready = h.client.connect();
+    h.open();
+    await ready;
+    const source = h.client.subscribeAgentTimelineSource("agent", () => {});
+    const native = h.client.subscribeAgentTimeline("agent", () => {});
+    await Promise.all([source.ready, native.ready]);
+    await h.client.fetchAgentTimelineSource("agent");
+    expect(
+      h.sent.find((frame) => frame.message?.type === "fetch_agent_timeline_request")?.message
+        ?.source,
+    ).toBe(true);
+    h.disconnect();
+    const reconnect = h.client.connect();
+    h.open();
+    await reconnect;
+    const requests = h.sent.filter(
+      (frame) => frame.message?.type === "agent.timeline.set_subscription.request",
+    );
+    expect(requests.map((frame) => frame.message?.source)).toEqual([
+      true,
+      undefined,
+      true,
+      undefined,
+    ]);
+    source();
+    native();
   } finally {
     await h.client.close();
   }

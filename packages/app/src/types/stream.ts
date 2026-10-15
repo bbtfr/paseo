@@ -78,7 +78,7 @@ function createAssistantItemId(
   return `${segmentId}:${suffix.toString(36)}`;
 }
 
-export type StreamItem =
+export type StreamItem = (
   | UserMessageItem
   | AssistantMessageItem
   | ThoughtItem
@@ -86,7 +86,14 @@ export type StreamItem =
   | TodoListItem
   | NotificationItem
   | CompactionItem
-  | PluginTimelineStreamItem;
+  | PluginTimelineStreamItem
+) & {
+  timelineSource?: {
+    item: AgentTimelineItem;
+    defaultItem: AgentTimelineItem | null;
+    provider: AgentProvider;
+  };
+};
 
 export type UserMessageImageAttachment = AttachmentMetadata;
 
@@ -1399,45 +1406,47 @@ function reduceTimelineToolCall(
   timestamp: Date,
   timelineCursor?: TimelinePosition,
 ): StreamItem[] {
-  const normalizedToolName = item.name
-    .trim()
-    .replace(/[.\s-]+/g, "_")
-    .toLowerCase();
-  if (
-    event.provider === "claude" &&
-    (normalizedToolName === "todowrite" || normalizedToolName === "todo_write")
-  ) {
-    const tasks = extractTaskEntriesFromToolCall(item.name, inputFromUnknownDetail(item.detail));
-    if (!tasks) {
+  if (!event.source) {
+    const normalizedToolName = item.name
+      .trim()
+      .replace(/[.\s-]+/g, "_")
+      .toLowerCase();
+    if (
+      event.provider === "claude" &&
+      (normalizedToolName === "todowrite" || normalizedToolName === "todo_write")
+    ) {
+      const tasks = extractTaskEntriesFromToolCall(item.name, inputFromUnknownDetail(item.detail));
+      if (!tasks) {
+        return state;
+      }
+      return appendTodoList(
+        state,
+        event.provider,
+        tasks.map((entry) => ({ text: entry.text, completed: entry.completed })),
+        timestamp,
+        timelineCursor,
+      );
+    }
+
+    if (
+      event.provider === "claude" &&
+      (normalizedToolName === "taskcreate" ||
+        normalizedToolName === "taskupdate" ||
+        normalizedToolName === "tasklist")
+    ) {
       return state;
     }
-    return appendTodoList(
-      state,
-      event.provider,
-      tasks.map((entry) => ({ text: entry.text, completed: entry.completed })),
-      timestamp,
-      timelineCursor,
-    );
-  }
 
-  if (
-    event.provider === "claude" &&
-    (normalizedToolName === "taskcreate" ||
-      normalizedToolName === "taskupdate" ||
-      normalizedToolName === "tasklist")
-  ) {
-    return state;
-  }
-
-  const tasks = extractTaskEntriesFromToolCall(item.name, inputFromUnknownDetail(item.detail));
-  if (tasks) {
-    return appendTodoList(
-      state,
-      event.provider,
-      tasks.map((entry) => ({ text: entry.text, completed: entry.completed })),
-      timestamp,
-      timelineCursor,
-    );
+    const tasks = extractTaskEntriesFromToolCall(item.name, inputFromUnknownDetail(item.detail));
+    if (tasks) {
+      return appendTodoList(
+        state,
+        event.provider,
+        tasks.map((entry) => ({ text: entry.text, completed: entry.completed })),
+        timestamp,
+        timelineCursor,
+      );
+    }
   }
 
   return appendAgentToolCall({
@@ -1589,6 +1598,46 @@ function reduceTimelineEvent(
 /**
  * Reduce a single AgentManager stream event into the UI timeline
  */
+function retainTimelineSource(
+  item: StreamItem,
+  previous: StreamItem | undefined,
+  event: Extract<AgentStreamEventPayload, { type: "timeline" }>,
+): StreamItem {
+  if (item === previous) return item;
+  if (item.kind === "thought" && event.item.type !== "reasoning") return item;
+  let original = event.item;
+  let defaultItem = event.source!.defaultItem;
+  if (
+    (original.type === "assistant_message" && item.kind === "assistant_message") ||
+    (original.type === "reasoning" && item.kind === "thought")
+  ) {
+    if (
+      defaultItem?.type === original.type &&
+      "text" in defaultItem &&
+      defaultItem.text === original.text
+    ) {
+      defaultItem = { ...defaultItem, text: item.text };
+    }
+    original = { ...original, text: item.text };
+  }
+  if (
+    original.type === "tool_call" &&
+    item.kind === "tool_call" &&
+    item.payload.source === "agent"
+  ) {
+    if (item.payload.data.callId !== original.callId) return item;
+    original = {
+      ...original,
+      detail: item.payload.data.detail,
+      metadata: item.payload.data.metadata,
+    };
+  }
+  return {
+    ...item,
+    timelineSource: { item: original, defaultItem, provider: event.provider },
+  };
+}
+
 export function reduceStreamUpdate(
   state: StreamItem[],
   event: AgentStreamEventPayload,
@@ -1597,8 +1646,8 @@ export function reduceStreamUpdate(
 ): StreamItem[] {
   const source = options?.source ?? "live";
   switch (event.type) {
-    case "timeline":
-      return applyTimelineTurnId(
+    case "timeline": {
+      const reduced = applyTimelineTurnId(
         reduceTimelineEvent(
           state,
           event,
@@ -1609,6 +1658,9 @@ export function reduceStreamUpdate(
         ),
         event,
       );
+      if (!event.source) return reduced;
+      return reduced.map((item, index) => retainTimelineSource(item, state[index], event));
+    }
     case "thread_started":
     case "turn_started":
     case "turn_completed":
@@ -1973,7 +2025,33 @@ export function applyStreamEvent(params: {
     timelineCursor: params.timelineCursor,
     unmatchedInsert: params.unmatchedUserMessageInsert,
   });
-  if (canonicalUserResult) return canonicalUserResult;
+  if (canonicalUserResult) {
+    if (event.type !== "timeline" || !event.source) return canonicalUserResult;
+    const annotate = (items: StreamItem[]) =>
+      items.map((item) =>
+        item.kind === "user_message" &&
+        event.item.type === "user_message" &&
+        ((item.clientMessageId === event.item.clientMessageId &&
+          item.clientMessageId !== undefined) ||
+          (item.messageId === event.item.messageId && item.messageId !== undefined))
+          ? {
+              ...item,
+              timelineSource: {
+                item: event.item,
+                defaultItem: event.source!.defaultItem,
+                provider: event.provider,
+              },
+            }
+          : item,
+      );
+    return {
+      ...canonicalUserResult,
+      tail: annotate(canonicalUserResult.tail),
+      head: annotate(canonicalUserResult.head),
+      changedTail: true,
+      changedHead: true,
+    };
+  }
   const source = params.source ?? "live";
   let nextTail = tail;
   let nextHead = head;

@@ -144,6 +144,10 @@ export interface PluginClientContext extends PluginCommandCapabilities, PluginCl
   addComposerPill(contribution: PluginComposerPillContribution): PluginButtonRegistration;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution): PluginCleanup;
   addTheme(contribution: PluginThemeContribution): PluginCleanup;
+  /** Transform provider-normalized messages before native display filtering. Requires timelineSource. */
+  addTimelineSourceTransformer<ItemType extends AgentTimelineItem["type"]>(
+    contribution: PluginTimelineTransformerContribution<ItemType>,
+  ): PluginCleanup;
   addTimelineTransformer<ItemType extends AgentTimelineItem["type"]>(
     contribution: PluginTimelineTransformerContribution<ItemType>,
   ): PluginCleanup;

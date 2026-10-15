@@ -72,10 +72,12 @@ function parseTransformResult(value: unknown): PluginTimelineTransformResult {
 }
 
 export function transformTimelineItem(
-  input: TimelineItemTransformInput & { plugins: readonly InstalledPlugin[] },
+  input: TimelineItemTransformInput & { plugins: readonly InstalledPlugin[]; source?: boolean },
 ): InstalledPluginTimelineItem[] | undefined {
   for (const plugin of input.plugins) {
-    for (const transformer of plugin.timelineTransformers) {
+    for (const transformer of input.source
+      ? plugin.timelineSourceTransformers
+      : plugin.timelineTransformers) {
       if (transformer.query.itemType !== input.item.type) continue;
       try {
         const transform = transformer.transform as (input: {
@@ -85,6 +87,16 @@ export function transformTimelineItem(
         const output = transform({ item: input.item, phase: input.phase });
         if (output === undefined) continue;
         const parsed = parseTransformResult(output);
+        if (
+          input.source &&
+          parsed.items.some((item) => {
+            const renderer = plugin.timelineRenderers.find(
+              (candidate) => candidate.kind === item.kind && candidate.version === item.version,
+            );
+            return !renderer || !renderer.schema.safeParse(item.data).success;
+          })
+        )
+          continue;
         return parsed.items.map((transformedItem, index) => ({
           type: "plugin",
           id: transformedItem.id ?? `${input.sourceId}/${index}`,

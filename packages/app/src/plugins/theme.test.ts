@@ -63,6 +63,7 @@ function installed(serverId: string, themes: PluginThemeContribution[]): Install
     attachmentSources: [],
     themes,
     timelineTransformers: [],
+    timelineSourceTransformers: [],
     timelineRenderers: [],
   };
 }

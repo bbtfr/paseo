@@ -577,6 +577,23 @@ Transformers run synchronously and must be deterministic. When several transform
 first one that returns a result owns that source item. Plugin and registration ordering is stable.
 See `plugin-examples/timeline-items` for the complete contract.
 
+Use `addTimelineSourceTransformer` with the same contribution type to inspect provider-normalized
+items before native display policy. It receives hidden `<paseo-system>` inputs and the original
+agent-message envelope, and runs before client Todo conversion. Its result and renderer contract
+are identical to `addTimelineTransformer`; there is no separate action protocol. `undefined`, a
+throw, invalid data, or a missing renderer falls back to native display policy. `{ items: [] }`
+explicitly hides the item. A renderer that throws still uses the existing plugin error boundary.
+
+The app requests source delivery from hosts advertising `server_info.features.timelineSource`.
+Older hosts keep the existing timeline path; source transformers cannot recover messages those
+hosts already filtered. Retained source items survive history pagination, reconnect snapshots,
+cache restore, and plugin hot reload. Claiming an item changes this client's display only.
+
+The source is an `AgentTimelineItem`, not the provider's raw protocol. Provider normalization,
+identity-based echo reconciliation, and tool-output transport limits still apply. Source callbacks
+cannot recover fields omitted by a provider, an old transcript, or a previously bounded record.
+Large-content references and provider-raw reads are outside this API.
+
 A plugin subprocess can also append a canonical plugin row from a server handler:
 
 ```ts

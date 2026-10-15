@@ -119,6 +119,7 @@ export function runPluginClientBundle(
     attachmentSources: [],
     themes: [],
     timelineTransformers: [],
+    timelineSourceTransformers: [],
     timelineRenderers: [],
   };
   const surfaceIds = new Set<string>();
@@ -133,7 +134,35 @@ export function runPluginClientBundle(
   const attachmentSourceIds = new Set<string>();
   const themeIds = new Set<string>();
   const timelineTransformerIds = new Set<string>();
+  const timelineSourceTransformerIds = new Set<string>();
   const timelineRendererIds = new Set<string>();
+  function registerTimelineTransformer(
+    contribution: PluginTimelineTransformerContribution,
+    contributions: PluginTimelineTransformerContribution[],
+    ids: Set<string>,
+  ): PluginCleanup {
+    const normalizedId = requireId(contribution.id, "timeline transformer id");
+    if (ids.has(normalizedId)) {
+      throw new Error(`Duplicate timeline transformer: ${normalizedId}`);
+    }
+    if (!contribution.query || typeof contribution.query.itemType !== "string") {
+      throw new Error(`Timeline transformer ${normalizedId} has no item type`);
+    }
+    if (!TIMELINE_ITEM_TYPES.has(contribution.query.itemType)) {
+      throw new Error(
+        `Timeline transformer ${normalizedId} has invalid item type: ${contribution.query.itemType}`,
+      );
+    }
+    if (typeof contribution.transform !== "function") {
+      throw new Error(`Timeline transformer ${normalizedId} has no transform`);
+    }
+    if (contribution.id !== normalizedId) {
+      throw new Error(`Invalid timeline transformer id: ${contribution.id}`);
+    }
+    ids.add(normalizedId);
+    return register(contributions, contribution, () => ids.delete(normalizedId));
+  }
+
   const removals = new Set<PluginCleanup>();
   let setupComplete = false;
   let stopped = false;
@@ -383,28 +412,18 @@ export function runPluginClientBundle(
       themeIds.add(normalizedId);
       return register(collector.themes, theme, () => themeIds.delete(normalizedId));
     },
+    addTimelineSourceTransformer(contribution: PluginTimelineTransformerContribution) {
+      return registerTimelineTransformer(
+        contribution,
+        collector.timelineSourceTransformers,
+        timelineSourceTransformerIds,
+      );
+    },
     addTimelineTransformer(contribution: PluginTimelineTransformerContribution) {
-      const normalizedId = requireId(contribution.id, "timeline transformer id");
-      if (timelineTransformerIds.has(normalizedId)) {
-        throw new Error(`Duplicate timeline transformer: ${normalizedId}`);
-      }
-      if (!contribution.query || typeof contribution.query.itemType !== "string") {
-        throw new Error(`Timeline transformer ${normalizedId} has no item type`);
-      }
-      if (!TIMELINE_ITEM_TYPES.has(contribution.query.itemType)) {
-        throw new Error(
-          `Timeline transformer ${normalizedId} has invalid item type: ${contribution.query.itemType}`,
-        );
-      }
-      if (typeof contribution.transform !== "function") {
-        throw new Error(`Timeline transformer ${normalizedId} has no transform`);
-      }
-      if (contribution.id !== normalizedId) {
-        throw new Error(`Invalid timeline transformer id: ${contribution.id}`);
-      }
-      timelineTransformerIds.add(normalizedId);
-      return register(collector.timelineTransformers, contribution, () =>
-        timelineTransformerIds.delete(normalizedId),
+      return registerTimelineTransformer(
+        contribution,
+        collector.timelineTransformers,
+        timelineTransformerIds,
       );
     },
     addTimelineRenderer(contribution: PluginTimelineRendererContribution) {
@@ -521,6 +540,7 @@ export function runPluginClientBundle(
     attachmentSources: collector.attachmentSources,
     themes: collector.themes,
     timelineTransformers: collector.timelineTransformers,
+    timelineSourceTransformers: collector.timelineSourceTransformers,
     timelineRenderers: collector.timelineRenderers,
   };
 }

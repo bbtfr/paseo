@@ -32,6 +32,7 @@ function installed(): InstalledPlugin {
     attachmentSources: [],
     themes: [],
     timelineTransformers: [],
+    timelineSourceTransformers: [],
     timelineRenderers: [],
   };
 }

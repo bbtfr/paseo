@@ -749,7 +749,7 @@ export class Session {
   private isCleanedUp = false;
   private readonly timelineSubscriptions = new Map<
     string,
-    { owner: OwnedSubscription; agentIds: Set<string> }
+    { owner: OwnedSubscription; agentIds: Set<string>; source: boolean }
   >();
   private readonly clientSources = new Map<
     object,
@@ -1284,12 +1284,12 @@ export class Session {
     this.refreshObservationProducers();
   }
 
-  private subscribeAgentTimelines(agentIds: string[]): OwnedSubscription {
+  private subscribeAgentTimelines(agentIds: string[], source = false): OwnedSubscription {
     const owner = this.delivery.begin("timelines", undefined, (id) => {
       this.timelineSubscriptions.delete(id);
       this.refreshObservationProducers();
     });
-    this.timelineSubscriptions.set(owner.id, { owner, agentIds: new Set(agentIds) });
+    this.timelineSubscriptions.set(owner.id, { owner, agentIds: new Set(agentIds), source });
     this.refreshObservationProducers();
     return owner;
   }
@@ -1329,6 +1329,11 @@ export class Session {
       const source = subscription.owner.source;
       if (!subscription.agentIds.has(event.agentId)) continue;
       if (
+        serializedEvent.type === "timeline" &&
+        subscription.source !== (event.source !== undefined)
+      )
+        continue;
+      if (
         attention &&
         (this.delivery.isModern(source) ||
           this.supportsForSource(CLIENT_CAPS.selectiveAgentTimeline, source))
@@ -1341,6 +1346,15 @@ export class Session {
         continue;
       subscription.owner.emit(message);
     }
+    if (event.source) return;
+    this.forwardLegacyAgentStream(event, serializedEvent, message);
+  }
+
+  private forwardLegacyAgentStream(
+    event: Extract<AgentManagerEvent, { type: "agent_stream" }>,
+    serializedEvent: Extract<SessionOutboundMessage, { type: "agent_stream" }>["payload"]["event"],
+    message: Extract<SessionOutboundMessage, { type: "agent_stream" }>,
+  ): void {
     // COMPAT(ownedSubscriptions): added in v0.8.0, remove implicit timeline delivery after 2027-03-09.
     for (const [source, { capabilities }] of this.clientSources) {
       if (this.delivery.isModern(source) || capabilities.has(CLIENT_CAPS.selectiveAgentTimeline))
@@ -1998,7 +2012,12 @@ export class Session {
           "agent.session.forward_stream",
         );
 
-        this.forwardAgentStream(event, serializedEvent);
+        this.forwardAgentStream(
+          event,
+          event.source && serializedEvent.type === "timeline"
+            ? { ...serializedEvent, source: event.source }
+            : serializedEvent,
+        );
 
         // An internal agent streams only to clients subscribed to it by id;
         // session-wide prompts would surface it everywhere.
@@ -2027,7 +2046,7 @@ export class Session {
       },
       // Internal agents flow through so exact-id subscribers and opted-in
       // listings see them; everything else above filters them out.
-      { replayState: false, includeInternal: true },
+      { replayState: false, includeInternal: true, includeTimelineSource: true },
     );
   }
 
@@ -2699,7 +2718,7 @@ export class Session {
       }
       case "agent.timeline.set_subscription.request": {
         const agentIds = [...new Set(msg.agentIds)].sort();
-        const owner = this.subscribeAgentTimelines(agentIds);
+        const owner = this.subscribeAgentTimelines(agentIds, msg.source === true);
         this.emitForSource(
           {
             type: "agent.timeline.set_subscription.response",
@@ -7747,7 +7766,11 @@ export class Session {
       });
       const agentPayload = await this.buildAgentPayload(snapshot);
 
-      const fetchedControlTimeline = this.agentManager.fetchTimeline(msg.agentId, {
+      const fetchedControlTimeline = (
+        msg.source
+          ? this.agentManager.fetchTimelineSource.bind(this.agentManager)
+          : this.agentManager.fetchTimeline.bind(this.agentManager)
+      )(msg.agentId, {
         direction,
         cursor,
         limit: pageLimit,
@@ -7795,6 +7818,14 @@ export class Session {
               const payloadEntry = {
                 provider: snapshot.provider,
                 item: entry.item,
+                source: msg.source
+                  ? {
+                      defaultItem: this.agentManager.projectTimelineSource(entry.item, {
+                        agentId: msg.agentId,
+                        seq: entry.seqEnd,
+                      }),
+                    }
+                  : undefined,
                 timestamp: entry.timestamp,
                 seqStart: entry.seqStart,
                 seqEnd: entry.seqEnd,

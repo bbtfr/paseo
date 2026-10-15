@@ -418,7 +418,9 @@ function SessionProviderInternal({ children, serverId, client }: SessionProvider
     };
     const sync = getHostRuntimeStore().createViewedTimelineOwner(serverId, {
       observe: (agentIds) => {
-        const observation = client.observeTimeline(agentIds);
+        const observation = client.observeTimeline(agentIds, {
+          source: client.supportsTimelineSource,
+        });
         observation.subscribe({
           snapshot: () => {},
           update: (message) => {
