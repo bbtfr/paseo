@@ -4,6 +4,7 @@ import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, describe, expect, it } from "vitest";
 import { getCommitFileDiff, listCheckoutCommits } from "./checkout-git.js";
+import { startGitCommandMetrics, stopGitCommandMetrics } from "./run-git-command.js";
 
 const tempDirs: string[] = [];
 
@@ -179,6 +180,44 @@ describe("getCommitFileDiff", () => {
         .split("\n")
         .map((content) => ({ type: "add", content })),
     );
+  });
+
+  it("shares commit rename discovery across concurrent and later file requests", async () => {
+    const repoDir = initRepo();
+    commitFile(repoDir, "old.txt", "same\n", "initial");
+    git(["mv", "old.txt", "new.txt"], repoDir);
+    commitFile(repoDir, "added.txt", "added\n", "rename and add");
+    const sha = headSha(repoDir);
+
+    startGitCommandMetrics();
+    try {
+      const [renamed, added] = await Promise.all([
+        getCommitFileDiff({ cwd: repoDir, sha, path: "new.txt" }),
+        getCommitFileDiff({ cwd: repoDir, sha, path: "added.txt" }),
+      ]);
+      expect(renamed).toMatchObject({ isNew: false, additions: 0, deletions: 0 });
+      expect(added).toMatchObject({ isNew: true, additions: 1, deletions: 0 });
+      expect(await getCommitFileDiff({ cwd: repoDir, sha, path: "new.txt" })).toEqual(renamed);
+    } finally {
+      const metrics = stopGitCommandMetrics();
+      expect(metrics.commands.filter(({ args }) => args.includes("--name-status"))).toHaveLength(1);
+    }
+  });
+
+  it("rediscovers renames when a symbolic commit ref moves", async () => {
+    const repoDir = initRepo();
+    commitFile(repoDir, "old.txt", "same\n", "initial");
+    expect(await getCommitFileDiff({ cwd: repoDir, sha: "HEAD", path: "old.txt" })).toMatchObject({
+      isNew: true,
+      additions: 1,
+    });
+    git(["mv", "old.txt", "new.txt"], repoDir);
+    git(["-c", "commit.gpgsign=false", "commit", "-m", "rename"], repoDir);
+    expect(await getCommitFileDiff({ cwd: repoDir, sha: "HEAD", path: "new.txt" })).toMatchObject({
+      isNew: false,
+      additions: 0,
+      deletions: 0,
+    });
   });
 
   it("returns null for a path not changed in the commit", async () => {

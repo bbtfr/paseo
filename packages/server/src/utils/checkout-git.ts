@@ -2643,13 +2643,36 @@ export async function listCheckoutCommits({
   return { baseRef: comparisonBaseRef, commits };
 }
 
+const commitRenamesCache = new TTLCache<string, Promise<ReadonlyMap<string, string>>>({
+  max: 100,
+  ttl: 60_000,
+  checkAgeOnGet: true,
+});
+
+function getCommitRenames(cwd: string, sha: string): Promise<ReadonlyMap<string, string>> {
+  // Symbolic refs and abbreviated IDs can resolve to a different commit later.
+  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i.test(sha)) {
+    return readCommitRenames(cwd, sha);
+  }
+  const key = JSON.stringify([cwd, sha]);
+  const cached = commitRenamesCache.get(key);
+  if (cached) {
+    return cached;
+  }
+  const lookup = readCommitRenames(cwd, sha).catch((error: unknown) => {
+    if (commitRenamesCache.get(key) === lookup) {
+      commitRenamesCache.delete(key);
+    }
+    throw error;
+  });
+  // Store the pending lookup too, so concurrent file requests share the scan.
+  commitRenamesCache.set(key, lookup);
+  return lookup;
+}
+
 // Discover renames across the commit before narrowing the patch to a file.
 // --follow also detects copies, which would disagree with history's -M-only list.
-async function getCommitFileRenameSource(
-  cwd: string,
-  sha: string,
-  path: string,
-): Promise<string | null> {
+async function readCommitRenames(cwd: string, sha: string): Promise<ReadonlyMap<string, string>> {
   const result = await runGitCommand(
     [
       "show",
@@ -2666,15 +2689,12 @@ async function getCommitFileRenameSource(
   if (result.truncated) {
     throw new Error("Commit renames exceeded the git output limit");
   }
+  const renames = new Map<string, string>();
   const fields = result.stdout.split("\0");
   for (let index = 0; index + 2 < fields.length; index += 3) {
-    const oldPath = fields[index + 1]!;
-    const newPath = fields[index + 2]!;
-    if (newPath === path) {
-      return oldPath;
-    }
+    renames.set(fields[index + 2]!, fields[index + 1]!);
   }
-  return null;
+  return renames;
 }
 
 /**
@@ -2699,8 +2719,9 @@ export async function getCommitFileDiff({
   path: string;
 }): Promise<ParsedDiffFile | null> {
   const worktreeRoot = await requireGitWorktreeRoot(cwd);
-  const oldPath = await getCommitFileRenameSource(worktreeRoot, sha, path);
-  const paths = oldPath === null ? [path] : [oldPath, path];
+  const renames = await getCommitRenames(worktreeRoot, sha);
+  const oldPath = renames.get(path);
+  const paths = oldPath === undefined ? [path] : [oldPath, path];
   const { stdout } = await runGitCommand(
     [
       "show",
