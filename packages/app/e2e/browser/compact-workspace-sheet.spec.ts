@@ -100,10 +100,36 @@ test("compact opens files and subagents in a sheet, leaving the tabs for agents"
       await expectComposerVisible(page);
     });
 
-    await test.step("a sheet with unsaved edits closes only through the guarded close", async () => {
+    await test.step("the list the subagent was opened from closed with its tab", async () => {
       await selectTabFromSwitcher(page, "Sheet parent");
-      // The list the subagent was opened from closed with its tab; it does not come back.
       await expect(page.getByTestId(`subagents-track-row-${child.id}`)).toHaveCount(0);
+    });
+
+    await test.step("once its tab closes, the subagent reopens in a sheet that keeps the list", async () => {
+      await page
+        .getByRole("button", { name: /Switch tabs/ })
+        .filter({ visible: true })
+        .click();
+      await expect(page.getByText("Workspace tabs", { exact: true })).toBeVisible();
+      const menuBase = `workspace-tab-menu-agent_${child.id}`;
+      await page.getByTestId(`${menuBase}-trigger`).click();
+      await page.getByTestId(`${menuBase}-close`).click();
+      await expectOpenTabCount(page, 1);
+      // Closing a tab keeps the switcher open, with the parent as the tab left. Its backdrop is
+      // tapped once the row menu's own sheet has gone.
+      await expect(page.getByRole("button", { name: "Bottom sheet backdrop" })).toHaveCount(1);
+      await tapSheetBackdrop(page);
+      await expect(page.getByRole("button", { name: "Bottom sheet backdrop" })).toHaveCount(0);
+
+      await openSubagentFromCompactTrack(page, child.id);
+      await expectSheetAtSnap(page, child.title);
+      await closeSheet(page, child.title);
+      await expectSubagentRowVisible(page, child.id);
+      await tapSheetBackdrop(page);
+      await expect(page.getByRole("button", { name: "Bottom sheet backdrop" })).toHaveCount(0);
+    });
+
+    await test.step("a sheet with unsaved edits closes only through the guarded close", async () => {
       await page.getByText(FILE_LINK, { exact: true }).click();
       const fileSheet = sheet(page, "linked.ts");
       await expect(fileSheet).toBeVisible();

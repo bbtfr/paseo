@@ -13,8 +13,14 @@ export function subagentRowTarget(row: SubagentRow): WorkspaceTabTarget {
 export function useSubagentOpensInSheet(
   workspaceKey: string | null,
 ): (row: SubagentRow) => boolean {
-  // Sheet placement follows the layout mode; subscribing re-renders the rows when it changes.
+  // The rows render the answer, so this subscribes to what the answer reads: the layout mode and
+  // the workspace's tabs. A subagent already open as a tab reveals that tab instead of a sheet,
+  // and a row rendered while that tab existed must re-render once it closes, or choosing the row
+  // would still close the list it sits in.
   useWorkspaceLayoutStore((state) => state.layoutMode);
+  useWorkspaceLayoutStore((state) =>
+    workspaceKey ? state.layoutByWorkspace[workspaceKey] : undefined,
+  );
   return (row) =>
     workspaceKey !== null &&
     useWorkspaceLayoutStore
