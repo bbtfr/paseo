@@ -41,7 +41,9 @@ ones above it, except ones holding unsaved work, which stay where they are. Open
 dismisses the sheets above it, since the tab would sit under them. The stack is not persisted.
 
 Sheets are modal and cover the whole compact column, header included. A sheet's header is its drag
-handle, because the panel scrolls on its own and content panning would fight it. The sheets present
+handle, because the panel scrolls on its own and content panning would fight it. Its trailing rail
+holds icon buttons only (`SheetHeaderIconButton`): Open as tab is the full-screen glyph beside
+Close, so the title keeps its width. The sheets present
 from inside the compact column's `SheetHostScope`, so their panels read the navigator and every
 workspace provider an ordinary pane has without a context bridge
 ([floating-panels.md Gotcha 6](floating-panels.md#gotcha-6--bottom-sheet-refs-are-not-lifecycle-truth)).

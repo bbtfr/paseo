@@ -5,7 +5,7 @@ export function sheet(page: Page, label: string): Locator {
   return page.getByRole("dialog", { name: label });
 }
 
-/** A sheet tab's header, which carries its title, Close, and Open as tab. */
+/** A sheet tab's header, which carries its title, Close, and the Open as tab glyph. */
 export function sheetHeader(page: Page, label: string): Locator {
   return page.getByTestId("sheet-tab-header").filter({ hasText: label });
 }
@@ -69,6 +69,7 @@ export async function selectTabFromSwitcher(page: Page, label: string): Promise<
     .getByRole("button", { name: /Switch tabs/ })
     .filter({ visible: true })
     .click();
+  await expect(page.getByText("Workspace tabs", { exact: true })).toBeVisible();
   const option = page.getByText(label, { exact: true }).filter({ visible: true }).last();
   await expect(option).toBeVisible();
   await option.click();

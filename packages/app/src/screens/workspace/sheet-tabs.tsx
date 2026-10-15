@@ -15,9 +15,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { StyleSheet, withUnistyles } from "react-native-unistyles";
 import { useStore } from "zustand";
 import { createStore } from "zustand/vanilla";
+import { Maximize2 } from "lucide-react-native";
 import {
   SheetBackground,
   SheetHandle,
+  SheetHeaderIconButton,
   SheetHeaderView,
   type SheetHeader,
 } from "@/components/adaptive-modal-sheet";
@@ -26,7 +28,6 @@ import {
   type IsolatedBottomSheetModalRef,
   systemBackPress,
 } from "@/components/ui/isolated-bottom-sheet-modal";
-import { Button } from "@/components/ui/button";
 import type { PanelIconProps } from "@/panels/panel-registry";
 import { getPanelRegistration } from "@/panels/panel-registry";
 import { ensurePanelsRegistered } from "@/panels/register-panels";
@@ -211,10 +212,15 @@ function SheetTabSheet({
     () => ({
       title: descriptor.label,
       leading: <ThemedPanelIcon icon={descriptor.icon} size={16} />,
+      // The sheet is for looking; the full-screen glyph takes the tab out of the sheet and into
+      // the switcher, where it gets its composer back.
       actions: sheet.policy.openAsTab ? (
-        <Button size="sm" variant="secondary" onPress={handleOpenAsTab}>
-          {t("workspace.sheet.openAsTab")}
-        </Button>
+        <SheetHeaderIconButton
+          icon={Maximize2}
+          accessibilityLabel={t("workspace.sheet.openAsTab")}
+          onPress={handleOpenAsTab}
+          testID="sheet-tab-open-as-tab"
+        />
       ) : undefined,
     }),
     [descriptor.icon, descriptor.label, handleOpenAsTab, sheet.policy.openAsTab, t],
