@@ -147,6 +147,40 @@ describe("getCommitFileDiff", () => {
     expect(file?.deletions).toBe(0);
   });
 
+  it.each([
+    ["exact", "line1\nline2\nline3\nline4\nline5\nline6\n"],
+    ["edited", "line1\nline2\nline3\nline4\nline5\nCHANGED\n"],
+  ])("shows an added %s copy as a new file", async (_kind, addedContent) => {
+    const repoDir = initRepo();
+    commitFile(repoDir, "source.txt", "line1\nline2\nline3\nline4\nline5\nline6\n", "initial");
+    commitFile(repoDir, "added.txt", addedContent, "add similar file");
+    const sha = headSha(repoDir);
+
+    const history = await listCheckoutCommits({ cwd: repoDir });
+    expect(history.commits.find((commit) => commit.sha === sha)?.files).toEqual([
+      { path: "added.txt", status: "added", additions: 6, deletions: 0 },
+    ]);
+    const file = await getCommitFileDiff({ cwd: repoDir, sha, path: "added.txt" });
+    expect(file).toMatchObject({
+      path: "added.txt",
+      isNew: true,
+      isDeleted: false,
+      additions: 6,
+      deletions: 0,
+    });
+    expect(
+      file?.hunks
+        .flatMap((hunk) => hunk.lines)
+        .filter((line) => line.type !== "header")
+        .map(({ type, content }) => ({ type, content })),
+    ).toEqual(
+      addedContent
+        .trimEnd()
+        .split("\n")
+        .map((content) => ({ type: "add", content })),
+    );
+  });
+
   it("returns null for a path not changed in the commit", async () => {
     const repoDir = initRepo();
     commitFile(repoDir, "foo.txt", "a\n", "initial");

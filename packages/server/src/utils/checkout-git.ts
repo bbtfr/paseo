@@ -2643,6 +2643,40 @@ export async function listCheckoutCommits({
   return { baseRef: comparisonBaseRef, commits };
 }
 
+// Discover renames across the commit before narrowing the patch to a file.
+// --follow also detects copies, which would disagree with history's -M-only list.
+async function getCommitFileRenameSource(
+  cwd: string,
+  sha: string,
+  path: string,
+): Promise<string | null> {
+  const result = await runGitCommand(
+    [
+      "show",
+      sha,
+      "--format=",
+      "--diff-merges=first-parent",
+      "--name-status",
+      "-z",
+      "-M",
+      "--diff-filter=R",
+    ],
+    { cwd, envOverlay: READ_ONLY_GIT_ENV },
+  );
+  if (result.truncated) {
+    throw new Error("Commit renames exceeded the git output limit");
+  }
+  const fields = result.stdout.split("\0");
+  for (let index = 0; index + 2 < fields.length; index += 3) {
+    const oldPath = fields[index + 1]!;
+    const newPath = fields[index + 2]!;
+    if (newPath === path) {
+      return oldPath;
+    }
+  }
+  return null;
+}
+
 /**
  * Fetches the unified diff of a single file as introduced by one commit and
  * parses it into the same {@link ParsedDiffFile} shape the diff subscription
@@ -2665,19 +2699,18 @@ export async function getCommitFileDiff({
   path: string;
 }): Promise<ParsedDiffFile | null> {
   const worktreeRoot = await requireGitWorktreeRoot(cwd);
+  const oldPath = await getCommitFileRenameSource(worktreeRoot, sha, path);
+  const paths = oldPath === null ? [path] : [oldPath, path];
   const { stdout } = await runGitCommand(
-    // Follow the destination back to its source before applying the path filter,
-    // otherwise Git presents a rename as an added file. Match history's -M detection.
     [
       "show",
       sha,
       "--format=",
       "--diff-merges=first-parent",
-      "--follow",
       "-M",
       ...GIT_PATCH_FORMAT_ARGS,
       "--",
-      path,
+      ...paths.map((filePath) => `:(literal)${filePath}`),
     ],
     {
       cwd: worktreeRoot,
@@ -2694,8 +2727,8 @@ export async function getCommitFileDiff({
     getNewFileContent: (file) => readGitFileContentAtRef(worktreeRoot, sha, file.path),
   });
 
-  // `--` scopes the diff to a single pathspec, so there is at most one real
-  // entry. Pick by path to drop any stray header-only section the parser emits.
+  // Including the rename source lets Git pair it with the destination. Select
+  // the requested entry if another change also matches the source path.
   const file = parsedFiles.find((candidate) => candidate.path === path) ?? null;
   if (!file) {
     return null;
