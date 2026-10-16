@@ -47,7 +47,10 @@ export class PluginRegistry {
   ): boolean {
     const previous = this.byHost.get(serverId) ?? [];
     const previousTimelineBundles = previous
-      .filter((plugin) => plugin.timelineTransformers.length > 0)
+      .filter(
+        (plugin) =>
+          plugin.timelineTransformers.length > 0 || plugin.timelineSourceTransformers.length > 0,
+      )
       .map((plugin) => `${plugin.id}\0${plugin.clientBundle}`);
     const preserved = catalog.flatMap((entry) => {
       const existing = previous.find(
@@ -99,6 +102,7 @@ export class PluginRegistry {
           attachmentSources: [],
           themes: [],
           timelineTransformers: [],
+          timelineSourceTransformers: [],
           timelineRenderers: [],
         };
         const runtime = this.dependencies.createRuntime(installation, options.audio);
@@ -137,7 +141,10 @@ export class PluginRegistry {
     this.byHost.set(serverId, installed);
     this.publish();
     const installedTimelineBundles = installed
-      .filter((plugin) => plugin.timelineTransformers.length > 0)
+      .filter(
+        (plugin) =>
+          plugin.timelineTransformers.length > 0 || plugin.timelineSourceTransformers.length > 0,
+      )
       .map((plugin) => `${plugin.id}\0${plugin.clientBundle}`);
     return (
       previousTimelineBundles.length !== installedTimelineBundles.length ||

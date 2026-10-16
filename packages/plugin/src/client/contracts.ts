@@ -1,6 +1,6 @@
 import type { ComponentType } from "react";
 import type { PaseoApi } from "@getpaseo/client";
-import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
+import type { AgentProvider, AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import type { ZodType, input as ZodInput, output as ZodOutput } from "zod";
 import type { PluginRpcContract } from "../rpc.js";
 import type {
@@ -144,6 +144,10 @@ export interface PluginClientContext extends PluginCommandCapabilities, PluginCl
   addComposerPill(contribution: PluginComposerPillContribution): PluginButtonRegistration;
   addAttachmentSource(contribution: PluginAttachmentSourceContribution): PluginCleanup;
   addTheme(contribution: PluginThemeContribution): PluginCleanup;
+  /** Transform provider-normalized messages before native display filtering. Requires timelineSource. */
+  addTimelineSourceTransformer<ItemType extends AgentTimelineItem["type"]>(
+    contribution: PluginTimelineSourceTransformerContribution<ItemType>,
+  ): PluginCleanup;
   addTimelineTransformer<ItemType extends AgentTimelineItem["type"]>(
     contribution: PluginTimelineTransformerContribution<ItemType>,
   ): PluginCleanup;
@@ -205,6 +209,25 @@ export type PluginTimelineTransformerContribution<
       transform(input: {
         item: Extract<AgentTimelineItem, { type: ItemType }>;
         phase: "streaming" | "complete";
+      }): PluginTimelineTransformResult | undefined;
+    }
+  : never;
+
+export type PluginTimelineSourceTransformerContribution<
+  ItemType extends AgentTimelineItem["type"] = AgentTimelineItem["type"],
+> = ItemType extends AgentTimelineItem["type"]
+  ? {
+      id: string;
+      query: {
+        itemType: ItemType;
+      };
+      transform(input: {
+        item: Extract<AgentTimelineItem, { type: ItemType }>;
+        phase: "streaming" | "complete";
+        /** The provider that emitted this source item, from the timeline event envelope. */
+        provider: AgentProvider;
+        /** The agent whose timeline produced this item; matches `PluginTimelineItemProps.agentId`. */
+        agentId: string;
       }): PluginTimelineTransformResult | undefined;
     }
   : never;

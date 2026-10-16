@@ -667,6 +667,7 @@ export interface FetchAgentOptions {
 }
 type LegacyFetchAgentOptions = Omit<FetchAgentOptions, "agentId">;
 export interface FetchAgentTimelineOptions {
+  source?: boolean;
   direction?: FetchAgentTimelineDirection;
   cursor?: FetchAgentTimelineCursor;
   limit?: number;
@@ -3279,9 +3280,11 @@ export class DaemonClient {
     agentId: string,
     options: FetchAgentTimelineOptions = {},
   ): Promise<FetchAgentTimelinePayload> {
+    if (options.source) this.requireTimelineSource();
     const resolvedRequestId = this.createRequestId(options.requestId);
     const message = SessionInboundMessageSchema.parse({
       type: "fetch_agent_timeline_request",
+      source: options.source,
       agentId,
       requestId: resolvedRequestId,
       ...(options.direction ? { direction: options.direction } : {}),
@@ -3432,13 +3435,42 @@ export class DaemonClient {
     return payload;
   }
 
+  get supportsTimelineSource(): boolean {
+    return this.getLastServerInfoMessage()?.features?.timelineSource === true;
+  }
+
+  private requireTimelineSource(): void {
+    if (!this.supportsTimelineSource)
+      throw new Error("Timeline source requires an updated Paseo host");
+  }
+
+  fetchAgentTimelineSource(
+    agentId: string,
+    options: FetchAgentTimelineOptions = {},
+  ): Promise<FetchAgentTimelinePayload> {
+    return this.fetchAgentTimeline(agentId, { ...options, source: true });
+  }
+
+  subscribeAgentTimelineSource(
+    agentId: string,
+    handler: (message: TimelineMessage) => void,
+  ): TimelineSubscription {
+    return subscribeTimeline(
+      agentId,
+      this.observeTimeline([agentId], { source: true }),
+      handler,
+      (error) => this.logger.error({ err: error }, "Timeline source observation failed"),
+    );
+  }
+
   observeTimeline(
     agentIds: string[],
-    options?: { signal?: AbortSignal },
+    options?: { signal?: AbortSignal; source?: boolean },
   ): OwnedSubscription<CorrelatedResponsePayload<"agent.timeline.set_subscription.response">> {
+    if (options?.source) this.requireTimelineSource();
     return this.observe(
       "agent.timeline.set_subscription.response",
-      { type: "agent.timeline.set_subscription.request", agentIds },
+      { type: "agent.timeline.set_subscription.request", agentIds, source: options?.source },
       options,
     );
   }

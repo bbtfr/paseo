@@ -11297,6 +11297,16 @@ test("user_message events wrapping a paseo-system envelope are not added to the 
 
   expect(userMessages).toHaveLength(1);
   expect(userMessages[0].text).toBe("plain user message");
+  const source = manager.fetchTimelineSource(snapshot.id);
+  expect(
+    source.rows.some(
+      (row) => row.item.type === "user_message" && row.item.text.includes("<paseo-system"),
+    ),
+  ).toBe(true);
+  expect(source.epoch).toBe(manager.fetchTimeline(snapshot.id).epoch);
+  for (const row of manager.fetchTimeline(snapshot.id).rows) {
+    expect(source.rows.some((original) => original.seqEnd === row.seqEnd)).toBe(true);
+  }
 });
 
 test("user_message events wrapping a paseo-system envelope are not restored during history replay", async () => {
@@ -11338,6 +11348,27 @@ test("user_message events wrapping a paseo-system envelope are not restored duri
 
   expect(userMessages).toHaveLength(1);
   expect(userMessages[0].text).toBe("real user message");
+  const source = manager.fetchTimelineSource(snapshot.id);
+  expect(source.rows.map((row) => row.item.type)).toEqual([
+    "user_message",
+    "user_message",
+    "assistant_message",
+  ]);
+  expect(source.rows[0]?.item).toMatchObject({ messageId: "msg_history_envelope" });
+  const lastPage = manager.fetchTimelineSource(snapshot.id, { limit: 1 });
+  const older = manager.fetchTimelineSource(snapshot.id, {
+    direction: "before",
+    cursor: { epoch: source.epoch, seq: lastPage.startSeq! },
+    limit: 2,
+  });
+  expect(older.rows).toHaveLength(2);
+  await manager.hydrateTimelineFromProvider(snapshot.id, { force: true });
+  const reloaded = manager.fetchTimelineSource(snapshot.id, {
+    direction: "after",
+    cursor: { epoch: source.epoch, seq: 1 },
+  });
+  expect(reloaded.staleCursor).toBe(true);
+  expect(reloaded.rows).toHaveLength(3);
 });
 
 test("commandMayHaveChangedExternalState matches remote-state commands", () => {
@@ -11857,3 +11888,117 @@ test.each([false, true])(
     }
   },
 );
+
+test.each(["plain_text", "shell"] as const)(
+  "source timeline preserves the %s transport output limit",
+  async (type) => {
+    const workdir = mkdtempSync(join(tmpdir(), "timeline-source-output-limit-"));
+    const output = "x".repeat(100_000);
+    const item: AgentTimelineItem = {
+      type: "tool_call",
+      callId: "large-tool",
+      name: "shell",
+      status: "completed",
+      error: null,
+      detail: type === "plain_text" ? { type, text: output } : { type, command: "example", output },
+    };
+    const manager = new AgentManager({
+      clients: { codex: fakeCodexEmitting({ turnItems: [item] }) },
+      logger,
+    });
+    const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+      workspaceId: undefined,
+    });
+    try {
+      await manager.runAgent(agent.id, { text: "start" });
+      const raw = manager
+        .fetchTimelineSource(agent.id)
+        .rows.find((row) => row.item.type === "tool_call")!.item;
+      const native = manager
+        .fetchTimeline(agent.id)
+        .rows.find((row) => row.item.type === "tool_call")!.item;
+      expect(raw).toEqual(native);
+      expect(JSON.stringify(raw).length).toBeLessThan(70_000);
+      if (type === "plain_text") expect(JSON.stringify(raw)).toContain("truncated");
+    } finally {
+      await manager.closeAgent(agent.id);
+      rmSync(workdir, { recursive: true, force: true });
+    }
+  },
+);
+
+test("source fallback preserves direct server timeline writes", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "timeline-source-direct-"));
+  const manager = new AgentManager({
+    clients: { codex: fakeCodexEmitting({ turnItems: [] }) },
+    logger,
+  });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  try {
+    const item: AgentTimelineItem = {
+      type: "user_message",
+      text: formatSystemNotificationPrompt("literal server entry"),
+    };
+    const updates: unknown[] = [];
+    const off = manager.subscribe(
+      (event) => {
+        if (event.type === "agent_stream" && event.source) updates.push(event.source.defaultItem);
+      },
+      { includeTimelineSource: true },
+    );
+    await manager.appendTimelineItem(agent.id, item);
+    const row = manager.fetchTimelineSource(agent.id).rows.at(-1)!;
+    expect(manager.projectTimelineSource(row.item, { agentId: agent.id, seq: row.seqEnd })).toEqual(
+      item,
+    );
+    expect(updates).toContainEqual(item);
+    off();
+  } finally {
+    await manager.closeAgent(agent.id);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});
+
+test("trailing hidden startup input keeps native pagination settled and source input available", async () => {
+  const workdir = mkdtempSync(join(tmpdir(), "timeline-source-startup-"));
+  class StartupSession extends TestAgentSession {
+    readonly initialTimeline = [
+      { item: { type: "assistant_message", text: "Ready" } as const },
+      {
+        item: {
+          type: "user_message",
+          text: formatSystemNotificationPrompt("scheduled input"),
+        } as const,
+      },
+    ];
+  }
+  const client = new (class extends TestAgentClient {
+    override async createSession(config: AgentSessionConfig) {
+      return new StartupSession(config);
+    }
+  })();
+  const manager = new AgentManager({ clients: { codex: client }, logger });
+  const agent = await manager.createAgent({ provider: "codex", cwd: workdir }, undefined, {
+    workspaceId: undefined,
+  });
+  try {
+    const native = manager.fetchTimeline(agent.id);
+    const source = manager.fetchTimelineSource(agent.id);
+    expect(native.rows.map((row) => row.item.type)).toEqual(["assistant_message"]);
+    expect(native.hasNewer).toBe(false);
+    expect(source.rows.map((row) => row.item.type)).toEqual(["assistant_message", "user_message"]);
+    expect(source.epoch).toBe(native.epoch);
+    await manager.appendTimelineItem(agent.id, {
+      type: "assistant_message",
+      messageId: "next",
+      text: "Next reply",
+    });
+    expect(manager.fetchTimeline(agent.id).rows.at(-1)?.seqEnd).toBe(3);
+    expect(manager.fetchTimelineSource(agent.id).rows.at(-1)?.seqEnd).toBe(3);
+  } finally {
+    await manager.closeAgent(agent.id);
+    rmSync(workdir, { recursive: true, force: true });
+  }
+});

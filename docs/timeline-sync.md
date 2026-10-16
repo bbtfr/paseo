@@ -21,6 +21,35 @@ to 64 KiB, and the same bounded item is used for runtime timeline rows and live 
 Provider history hydration applies the same rule so reopening an agent cannot restore an oversized
 tool payload.
 
+## Source timeline delivery
+
+Hosts advertise `features.timelineSource`. The app opts into `source: true` on the existing
+`fetch_agent_timeline_request` and `agent.timeline.set_subscription.request`. The client SDK also
+exposes `fetchAgentTimelineSource` and `subscribeAgentTimelineSource`, which reject unsupported
+hosts. Native subscriptions on the same connection continue receiving their existing projection.
+
+Source events and fetch entries carry the provider-normalized item and an optional `source`
+sidecar with `defaultItem`: the native server projection, or `null` when it is hidden. Live source
+text is incremental; the default item is the accumulated snapshot. Source fetches return full
+projected items. Tool lifecycle folding and text accumulation use the existing timeline store.
+Source items are captured before envelope display policy and retained through client caching;
+client Todo conversion is deferred until source transformers decline the item. Existing transport
+limits still bound tool output. This API adds neither durable raw-protocol storage nor large-content
+references.
+
+The native and source stores share an epoch and event sequence space. Source-only items consume
+positions; native rows can have gaps. A native row keeps the corresponding source position so
+rendered native Fork anchors remain valid. Keep each subscription paired with its matching fetch
+mode: source pagination includes hidden rows that native pagination omits. Reload resets both stores;
+provider history remains the durable authority. Imported source rows keep the same positions as
+native visible rows. Old durable seeds can only supply the data they retained.
+
+Source subscriptions receive ordinary turn and permission events without changing their lifecycle
+semantics. They do not also receive native copies of committed timeline rows. Ephemeral timeline
+updates remain ephemeral. Plugins select display output on the client; they do not rewrite submitted
+prompts or affect another client's display. A failed or unavailable source transformer falls back
+to `defaultItem`, then native client semantic conversion, then existing presentation transformers.
+
 ## Presence is not delivery
 
 Client heartbeat reports presence:

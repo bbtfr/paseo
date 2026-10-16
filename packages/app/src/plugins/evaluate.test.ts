@@ -746,3 +746,19 @@ it("binds imported getters to each originating installation across delayed callb
   await first.cleanup();
   await second.cleanup();
 });
+
+it("registers and removes source transformers independently of presentation transformers", async () => {
+  const plugin = evaluatePluginClientBundle(
+    "source",
+    bundle(`
+    const contribution = { id: "messages", query: { itemType: "user_message" }, transform() { return { items: [] }; } };
+    plugin.addTimelineTransformer(contribution);
+    plugin.addTimelineSourceTransformer(contribution);
+  `),
+  );
+  expect(plugin.timelineTransformers).toHaveLength(1);
+  expect(plugin.timelineSourceTransformers).toHaveLength(1);
+  await plugin.cleanup();
+  expect(plugin.timelineTransformers).toHaveLength(0);
+  expect(plugin.timelineSourceTransformers).toHaveLength(0);
+});

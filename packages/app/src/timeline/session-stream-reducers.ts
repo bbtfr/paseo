@@ -125,6 +125,7 @@ function timelineCursorEquals(left: TimelineCursor, right: TimelineCursor): bool
 }
 
 interface TimelineResponseEntry {
+  source?: { defaultItem: AgentTimelineItem | null };
   seqStart: number;
   seqEnd: number;
   sourceSeqRanges?: TimelineSeqRange[];
@@ -751,6 +752,20 @@ function mergeOlderTimelinePage(input: {
   return [...retainedBefore, ...mergePrependedCanonicalTail(input.page, currentAtOrAfterPage)];
 }
 
+function timelineSourceMetadata(
+  event: AgentStreamEventPayload,
+): Pick<StreamItem, "timelineSource"> {
+  return event.type === "timeline" && event.source
+    ? {
+        timelineSource: {
+          item: event.item,
+          defaultItem: event.source.defaultItem,
+          provider: event.provider,
+        },
+      }
+    : {};
+}
+
 function replaceLiveAssistantWithProjectedText(params: {
   head: StreamItem[];
   event: AgentStreamEventPayload;
@@ -773,6 +788,7 @@ function replaceLiveAssistantWithProjectedText(params: {
   next[index] = {
     ...current,
     text: event.item.text,
+    ...timelineSourceMetadata(event),
     timestamp,
     timelineCursor,
   };
@@ -823,6 +839,7 @@ function reconcileOverlappingProjectedAssistant(params: {
     id: match.current.id,
     ...(messageId !== undefined ? { messageId } : {}),
     text: projectedText,
+    ...timelineSourceMetadata(unit.event),
     timestamp: unit.timestamp,
     timelineCursor: { epoch: params.epoch, seq: unit.seqEnd },
   };
@@ -874,6 +891,7 @@ function reconcileOverlappingProjectedReasoning(params: {
     next[index] = {
       ...current,
       text: projectedText,
+      ...timelineSourceMetadata(unit.event),
       timestamp: unit.timestamp,
       status: "loading",
     };
@@ -1264,6 +1282,7 @@ export function processTimelineResponse(
       type: "timeline",
       provider: entry.provider,
       item: entry.item,
+      source: entry.source,
       ...(entry.turnId ? { turnId: entry.turnId } : {}),
     } as AgentStreamEventPayload,
     timestamp: new Date(entry.timestamp),

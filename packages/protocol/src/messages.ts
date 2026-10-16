@@ -753,6 +753,7 @@ export const AgentStreamEventPayloadSchema = z.discriminatedUnion("type", [
     type: z.literal("timeline"),
     provider: AgentProviderSchema,
     item: AgentTimelineItemPayloadSchema,
+    source: z.object({ defaultItem: AgentTimelineItemPayloadSchema.nullable() }).optional(),
     turnId: z.string().optional(),
   }),
   z.object({
@@ -1869,6 +1870,7 @@ export const AgentTimelineCursorSchema = z.object({
 
 export const FetchAgentTimelineRequestMessageSchema = z.object({
   type: z.literal("fetch_agent_timeline_request"),
+  source: z.boolean().optional(),
   agentId: z.string(),
   requestId: z.string(),
   direction: z.enum(["tail", "before", "after"]).optional(),
@@ -1913,6 +1915,7 @@ export const ProviderSubagentTimelineRequestMessageSchema = z.object({
 
 export const SetAgentTimelineSubscriptionRequestMessageSchema = z.object({
   type: z.literal("agent.timeline.set_subscription.request"),
+  source: z.boolean().optional(),
   agentIds: z.array(z.string()),
   requestId: z.string(),
 });
@@ -3726,6 +3729,7 @@ export const ServerInfoStatusPayloadSchema = z
         // COMPAT(canonicalSubmittedPrompts): added in v0.2.6, remove gate after 2027-01-30.
         canonicalSubmittedPrompts: z.boolean().optional(),
         agentMessageProvenance: z.boolean().optional(),
+        timelineSource: z.boolean().optional(),
         // COMPAT(agentTurnIdentity): accept peers that observed pre-release v0.2.6 through 2027-01-31.
         agentTurnIdentity: z.boolean().optional(),
         // COMPAT(stableProjectIdentity): added in v0.1.109, remove gate after 2027-01-15.
@@ -4614,6 +4618,7 @@ const AgentTimelineSeqRangeSchema = z.object({
 export const AgentTimelineEntryPayloadSchema = z.object({
   provider: AgentProviderSchema,
   item: AgentTimelineItemPayloadSchema,
+  source: z.object({ defaultItem: AgentTimelineItemPayloadSchema.nullable() }).optional(),
   turnId: z.string().optional(),
   timestamp: z.string(),
   seqStart: z.number().int().nonnegative(),

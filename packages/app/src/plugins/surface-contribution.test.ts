@@ -38,6 +38,7 @@ function installation(
     attachmentSources: [],
     themes: [],
     timelineTransformers: [],
+    timelineSourceTransformers: [],
     timelineRenderers: [],
   };
 }

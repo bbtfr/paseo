@@ -1313,6 +1313,43 @@ the source row, so updates to one streaming item do not remount its renderer. Us
 `useRevealedText(text, phase)` hook when a renderer should pace streaming text like Paseo's built-in
 assistant rows.
 
+### Transform before native display policy
+
+`client.addTimelineSourceTransformer(contribution)` accepts a
+`PluginTimelineSourceTransformerContribution`: the same `id`, `query.itemType`, and
+`{ items } | undefined` contract as `addTimelineTransformer`, with a transform input of
+`{ item, phase, provider, agentId }`. `provider` is the provider that emitted the source item, and
+`agentId` matches the renderer props. Reuse `addTimelineRenderer` for its output.
+For example, a notification plugin can recognize the exact `<paseo-system>` envelope in a
+`user_message` before Paseo hides it, without replacing the agent provider.
+
+```ts
+client.addTimelineSourceTransformer({
+  id: "system-inputs",
+  query: { itemType: "user_message" },
+  transform({ item }) {
+    const match = /^<paseo-system>\n([\s\S]*)\n<\/paseo-system>$/.exec(item.text.trim());
+    if (!match) return undefined;
+    return {
+      items: [{ type: "plugin", kind: "system-input", version: 1, data: { text: match[1] } }],
+    };
+  },
+});
+// Register a system-input renderer whose schema accepts { text: string }.
+```
+
+Source transformers run before native envelope filtering, Todo conversion, and existing presentation
+transformers. The first valid result wins; an empty `items` array hides the item. Returning
+`undefined`, throwing, returning invalid data, or referencing a missing renderer leaves native
+policy in charge. Renderer exceptions use the usual plugin error boundary. Hot reload and removal
+reproject retained source items, so removing a notification plugin hides the envelope again.
+
+This requires an app and host with `server_info.features.timelineSource`. Older hosts retain the
+existing display path. Source means provider-normalized `AgentTimelineItem` data after transport
+size limits, not provider-raw ACP/JSON events. It cannot recover information the adapter or old
+session data did not retain. Tool output keeps the existing 64 KiB limits where applicable;
+large-content references are not part of this API.
+
 ### Append a timeline row from the daemon
 
 A server handler can add a plugin-owned row to canonical history:

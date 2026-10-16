@@ -533,6 +533,32 @@ describe("ReplicaCache", () => {
     expect((await cache.readTimeline(SERVER_ID, "agent-1"))?.items).toEqual([timelineItem("New")]);
   });
 
+  it("round-trips hidden source messages without exposing their envelope as native text", async () => {
+    const storage = new MemoryStorage();
+    const writer = createCache(storage);
+    const raw = {
+      type: "user_message" as const,
+      text: "<paseo-system>\nCheck status\n</paseo-system>",
+      messageId: "system",
+    };
+    const item: StreamItem = {
+      kind: "user_message",
+      id: "system",
+      text: raw.text,
+      messageId: "system",
+      timestamp: new Date("2026-01-01T00:00:00Z"),
+      timelineSource: { item: raw, defaultItem: null, provider: "mock" },
+    };
+    writer.commitTimeline(SERVER_ID, "agent-1", {
+      agentId: "agent-1",
+      items: [item],
+      range: null,
+      hasOlder: false,
+    });
+    await writer.flush();
+    expect((await createCache(storage).readTimeline(SERVER_ID, "agent-1"))?.items).toEqual([item]);
+  });
+
   it("round-trips plugin timeline items", async () => {
     const storage = new MemoryStorage();
     const writer = createCache(storage);

@@ -1884,6 +1884,9 @@ describe("processTimelineResponse", () => {
           {
             ...makeTimelineEntry(2, "Hello", "assistant_message", 3),
             sourceSeqRanges: [{ startSeq: 2, endSeq: 3 }],
+            source: {
+              defaultItem: { type: "assistant_message", text: "Hello", messageId: "answer-1" },
+            },
             item: {
               type: "assistant_message",
               text: "Hello",
@@ -1898,7 +1901,14 @@ describe("processTimelineResponse", () => {
       (item) => item.kind === "assistant_message",
     );
     expect(assistants).toHaveLength(1);
-    expect(assistants[0]).toMatchObject({ text: "Hello", messageId: "answer-1" });
+    expect(assistants[0]).toMatchObject({
+      text: "Hello",
+      messageId: "answer-1",
+      timelineSource: {
+        item: { type: "assistant_message", text: "Hello", messageId: "answer-1" },
+        defaultItem: { type: "assistant_message", text: "Hello", messageId: "answer-1" },
+      },
+    });
   });
 
   it("replaces the whole live assistant message when reconciling projected history", () => {

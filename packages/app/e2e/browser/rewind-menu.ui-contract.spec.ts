@@ -76,6 +76,8 @@ async function rewriteCachedMessageAsLegacyRow(
     .find((item) => item.kind === "user_message" && item.text === input.prompt);
   if (!cachedMessage) throw new Error("Cached user message was not found");
   delete cachedMessage.messageId;
+  // Legacy rows predate both provider IDs and retained source metadata.
+  delete cachedMessage.timelineSource;
   await writeReplicaCache(page, cache);
 }
 

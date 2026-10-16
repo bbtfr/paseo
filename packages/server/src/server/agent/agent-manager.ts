@@ -237,6 +237,7 @@ export type AgentManagerEvent =
       seq?: number;
       epoch?: string;
       timestamp?: string;
+      source?: { defaultItem: AgentTimelineItem | null };
     };
 
 export type AgentSubscriber = (event: AgentManagerEvent) => void;
@@ -246,6 +247,7 @@ export interface SubscribeOptions {
   replayState?: boolean;
   /** Receive events for internal agents too. Off by default for global subscribers. */
   includeInternal?: boolean;
+  includeTimelineSource?: boolean;
 }
 
 interface HydrateTimelineOptions {
@@ -573,6 +575,7 @@ interface SubscriptionRecord {
   callback: AgentSubscriber;
   agentId: string | null;
   includeInternal: boolean;
+  includeTimelineSource: boolean;
 }
 
 interface SteerEventBarrier {
@@ -634,6 +637,7 @@ function buildExplicitTimelineSeedForRegister(
     | {
         timeline?: AgentTimelineItem[];
         timelineRows?: AgentTimelineRow[];
+        sourceTimeline?: readonly ImportedTimelineEntry[];
         timelineNextSeq?: number;
         createdAt?: Date;
         updatedAt?: Date;
@@ -656,11 +660,11 @@ function buildExplicitTimelineSeedForRegister(
 
 function buildImportedTimelineRows(entries: readonly ImportedTimelineEntry[]): AgentTimelineRow[] {
   const rows: AgentTimelineRow[] = [];
-  for (const entry of entries) {
+  for (const [index, entry] of entries.entries()) {
     const item = projectAgentMessage(entry.item);
     if (!item) continue;
     rows.push({
-      seq: rows.length + 1,
+      seq: index + 1,
       timestamp: entry.timestamp ?? new Date().toISOString(),
       item: limitAgentTimelineItemContent(item),
     });
@@ -742,6 +746,8 @@ export class AgentManager {
   private readonly providerDefinitions = new Map<AgentProvider, ProviderEnabledFlag>();
   private readonly agents = new Map<string, LiveManagedAgent>();
   private readonly timelineStore = new InMemoryAgentTimelineStore();
+  private readonly timelineSourceStore = new InMemoryAgentTimelineStore();
+  private readonly nativeTimelineSourceSeqs = new Map<string, Set<number>>();
   private readonly providerSubagents = new ProviderSubagentStore();
   private readonly agentsAwaitingInitialSnapshotPersist = new Set<string>();
   private readonly sessionEventTails = new Map<string, Promise<void>>();
@@ -971,6 +977,7 @@ export class AgentManager {
       callback,
       agentId: targetAgentId,
       includeInternal: options?.includeInternal === true,
+      includeTimelineSource: options?.includeTimelineSource === true,
     };
     this.subscribers.add(record);
 
@@ -1231,6 +1238,73 @@ export class AgentManager {
   fetchTimeline(id: string, options?: AgentTimelineFetchOptions): AgentTimelineFetchResult {
     this.requireAgent(id);
     return this.timelineStore.fetch(id, options);
+  }
+
+  fetchTimelineSource(id: string, options?: AgentTimelineFetchOptions): AgentTimelineFetchResult {
+    this.requireAgent(id);
+    this.ensureTimelineSource(id);
+    return this.timelineSourceStore.fetch(id, options);
+  }
+
+  projectTimelineSource(
+    item: AgentTimelineItem,
+    position?: { agentId: string; seq: number },
+  ): AgentTimelineItem | null {
+    const native =
+      position && this.nativeTimelineSourceSeqs.get(position.agentId)?.has(position.seq);
+    const projected = native ? item : projectAgentMessage(item);
+    return projected ? limitAgentTimelineItemContent(projected) : null;
+  }
+
+  private ensureTimelineSource(id: string): void {
+    if (this.timelineSourceStore.has(id)) return;
+    this.nativeTimelineSourceSeqs.set(
+      id,
+      new Set(this.timelineStore.getRows(id).map((row) => row.seq)),
+    );
+    this.timelineSourceStore.initialize(id, {
+      epoch: this.timelineStore.getEpoch(id),
+      rows: this.timelineStore.getRows(id),
+    });
+  }
+
+  private recordTimelineSource(
+    agentId: string,
+    item: AgentTimelineItem,
+    options?: { timestamp?: string; turnId?: string; providerMessageId?: string },
+    broadcast = true,
+    native = false,
+  ): AgentTimelineRow {
+    this.ensureTimelineSource(agentId);
+    item = limitAgentTimelineItemContent(item);
+    const row = this.timelineSourceStore.append(agentId, item, options);
+    if (native) {
+      const seqs = this.nativeTimelineSourceSeqs.get(agentId) ?? new Set<number>();
+      seqs.add(row.seq);
+      this.nativeTimelineSourceSeqs.set(agentId, seqs);
+    }
+    if (broadcast) {
+      this.dispatch({
+        type: "agent_stream",
+        agentId,
+        source: {
+          defaultItem: this.projectTimelineSource(
+            this.timelineSourceStore.getLastItem(agentId) ?? item,
+            { agentId, seq: row.seq },
+          ),
+        },
+        event: {
+          type: "timeline",
+          provider: this.requireAgent(agentId).provider,
+          item,
+          turnId: options?.turnId,
+        },
+        seq: row.seq,
+        epoch: this.timelineSourceStore.getEpoch(agentId),
+        timestamp: row.timestamp,
+      });
+    }
+    return row;
   }
 
   listProviderSubagents(parentAgentId: string): ProviderSubagentDescriptor[] {
@@ -1508,7 +1582,8 @@ export class AgentManager {
         labels: input.labels,
         workspaceId: input.workspaceId,
         timelineRows,
-        timelineNextSeq: timelineRows.length + 1,
+        timelineNextSeq: (timelineRows.at(-1)?.seq ?? 0) + 1,
+        sourceTimeline: imported.timeline,
         persistence: imported.persistence,
         historyPrimed: true,
         initialTitle,
@@ -1613,6 +1688,8 @@ export class AgentManager {
         // Wipe the in-memory timeline so registerSession mints a new epoch and
         // hydrateTimelineFromProvider re-streams the freshly read provider history.
         this.timelineStore.delete(agentId);
+        this.timelineSourceStore.delete(agentId);
+        this.nativeTimelineSourceSeqs.delete(agentId);
         for (const event of this.providerSubagents.deleteParent(agentId)) {
           this.dispatch({ type: "provider_subagent", event });
         }
@@ -2502,14 +2579,13 @@ export class AgentManager {
     item: AgentTimelineItem,
   ): Promise<{ seq: number; epoch: string }> {
     const agent = this.requireAgent(agentId);
-    item = limitAgentTimelineItemContent(item);
     this.touchUpdatedAt(agent);
     const row = this.recordTimeline(agentId, item);
     this.dispatchStream(
       agentId,
       {
         type: "timeline",
-        item,
+        item: row.item,
         provider: agent.provider,
       },
       {
@@ -2525,6 +2601,13 @@ export class AgentManager {
   async emitLiveTimelineItem(agentId: string, item: AgentTimelineItem): Promise<void> {
     const agent = this.requireAgent(agentId);
     this.touchUpdatedAt(agent);
+    item = limitAgentTimelineItemContent(item);
+    this.dispatch({
+      type: "agent_stream",
+      agentId,
+      event: { type: "timeline", provider: agent.provider, item },
+      source: { defaultItem: limitAgentTimelineItemContent(item) },
+    });
     this.dispatchStream(agentId, {
       type: "timeline",
       item,
@@ -3554,6 +3637,7 @@ export class AgentManager {
       labels?: Record<string, string>;
       timeline?: AgentTimelineItem[];
       timelineRows?: AgentTimelineRow[];
+      sourceTimeline?: readonly ImportedTimelineEntry[];
       timelineNextSeq?: number;
       persistence?: AgentPersistenceHandle;
       historyPrimed?: boolean;
@@ -3606,7 +3690,7 @@ export class AgentManager {
       const startupHistory: AgentStreamEvent[] = [];
       if (session.initialTimeline?.length && !managed.historyPrimed) {
         for await (const event of session.streamHistory()) {
-          startupHistory.push(limitAgentStreamEventContent(event));
+          startupHistory.push(event);
         }
       }
 
@@ -3620,9 +3704,7 @@ export class AgentManager {
           // Legacy/imported chats need their existing history before startup rows.
           await this.primeTimelineFromLegacyProviderHistory(managed, false, startupHistory);
         } else {
-          for (const entry of buildImportedTimelineRows(session.initialTimeline)) {
-            this.recordTimeline(managed.id, entry.item, { timestamp: entry.timestamp });
-          }
+          this.appendImportedTimeline(managed.id, session.initialTimeline);
         }
         this.refreshSessionPersistence(managed);
       }
@@ -3678,6 +3760,23 @@ export class AgentManager {
     }
   }
 
+  private appendImportedTimeline(agentId: string, entries: readonly ImportedTimelineEntry[]): void {
+    for (const entry of entries) {
+      const sourceRow = this.recordTimelineSource(
+        agentId,
+        entry.item,
+        { timestamp: entry.timestamp },
+        false,
+      );
+      const item = this.projectTimelineSource(entry.item);
+      if (item)
+        this.recordTimeline(agentId, item, {
+          timestamp: entry.timestamp,
+          sourceSeq: sourceRow.seq,
+        });
+    }
+  }
+
   private async requireExternalMcpSupport(
     session: AgentSession,
     storedConfig: AgentSessionConfig,
@@ -3699,6 +3798,7 @@ export class AgentManager {
       | {
           timeline?: AgentTimelineItem[];
           timelineRows?: AgentTimelineRow[];
+          sourceTimeline?: readonly ImportedTimelineEntry[];
           timelineNextSeq?: number;
           persistence?: AgentPersistenceHandle;
           createdAt?: Date;
@@ -3720,6 +3820,16 @@ export class AgentManager {
     const timelineSeed = explicitTimelineSeed ?? durableTimelineSeed;
     if (timelineSeed || !this.timelineStore.has(agentId)) {
       this.timelineStore.initialize(agentId, timelineSeed ?? { timestamp: now.toISOString() });
+    }
+    if (options?.sourceTimeline) {
+      this.timelineSourceStore.initialize(agentId, {
+        epoch: this.timelineStore.getEpoch(agentId),
+        rows: options.sourceTimeline.map((entry, index) => ({
+          seq: index + 1,
+          item: limitAgentTimelineItemContent(entry.item),
+          timestamp: entry.timestamp ?? now.toISOString(),
+        })),
+      });
     }
     if (options?.timelineRows?.length) {
       this.enqueueDurableTimelineBulkInsert(agentId, options.timelineRows);
@@ -3839,6 +3949,8 @@ export class AgentManager {
 
   private discardRetainedAgentState(agentId: string): void {
     this.timelineStore.delete(agentId);
+    this.timelineSourceStore.delete(agentId);
+    this.nativeTimelineSourceSeqs.delete(agentId);
     this.paseoToolPolicies.delete(agentId);
     for (const event of this.providerSubagents.deleteParent(agentId)) {
       this.dispatch({ type: "provider_subagent", event });
@@ -4125,11 +4237,9 @@ export class AgentManager {
     const historyEvents: Extract<AgentStreamEvent, { type: "timeline" }>[] = [];
     const providerSubagentEvents: Extract<AgentStreamEvent, { type: "provider_subagent" }>[] = [];
     for await (const rawEvent of agent.session.streamHistory()) {
-      const event = limitAgentStreamEventContent(rawEvent);
+      const event = rawEvent;
       if (event.type === "timeline") {
-        const item = projectAgentMessage(event.item);
-        if (!item) continue;
-        historyEvents.push({ ...event, item });
+        historyEvents.push(event);
       } else if (event.type === "provider_subagent") {
         providerSubagentEvents.push(event);
       }
@@ -4138,6 +4248,8 @@ export class AgentManager {
     this.agentStreamCoalescer.flushAndDiscard(agent.id);
     await this.deleteCommittedTimeline(agent.id);
     this.timelineStore.delete(agent.id);
+    this.timelineSourceStore.delete(agent.id);
+    this.nativeTimelineSourceSeqs.delete(agent.id);
     this.timelineStore.initialize(agent.id, { timestamp: new Date().toISOString() });
     agent.historyPrimed = true;
 
@@ -4152,12 +4264,21 @@ export class AgentManager {
         this.dispatch({ type: "provider_subagent", event: update });
       }
     }
-    for (const event of historyEvents) {
-      const row = this.recordTimeline(
+    for (const sourceEvent of historyEvents) {
+      const sourceRow = this.recordTimelineSource(
         agent.id,
-        event.item,
-        event.timestamp ? { timestamp: event.timestamp } : undefined,
+        sourceEvent.item,
+        { timestamp: sourceEvent.timestamp, turnId: sourceEvent.turnId },
+        false,
       );
+      const item = this.projectTimelineSource(sourceEvent.item);
+      if (!item) continue;
+      const event = { ...sourceEvent, item };
+      const row = this.recordTimeline(agent.id, item, {
+        timestamp: sourceEvent.timestamp,
+        turnId: sourceEvent.turnId,
+        sourceSeq: sourceRow.seq,
+      });
       if (broadcastTimeline) {
         this.dispatchStream(agent.id, event, {
           seq: row.seq,
@@ -4186,7 +4307,7 @@ export class AgentManager {
       // halfway then leaves the committed timeline as it was, instead of a partial
       // copy the next attempt would append to.
       for await (const rawEvent of history) {
-        const event = limitAgentStreamEventContent(rawEvent);
+        const event = rawEvent;
         if (event.type === "provider_subagent") {
           historySubagentEvents.push(event);
           continue;
@@ -4194,9 +4315,7 @@ export class AgentManager {
         if (event.type !== "timeline") {
           continue;
         }
-        const item = projectAgentMessage(event.item);
-        if (!item) continue;
-        historyEvents.push({ ...event, item });
+        historyEvents.push(event);
       }
     } catch (error) {
       this.logger.warn({ err: error, agentId: agent.id }, "Failed to hydrate provider history");
@@ -4221,12 +4340,21 @@ export class AgentManager {
         this.dispatch(managerEvent);
       }
     }
-    for (const event of historyEvents) {
-      const row = this.recordTimeline(
+    for (const sourceEvent of historyEvents) {
+      const sourceRow = this.recordTimelineSource(
         agent.id,
-        event.item,
-        event.timestamp ? { timestamp: event.timestamp } : undefined,
+        sourceEvent.item,
+        { timestamp: sourceEvent.timestamp, turnId: sourceEvent.turnId },
+        false,
       );
+      const item = this.projectTimelineSource(sourceEvent.item);
+      if (!item) continue;
+      const event = { ...sourceEvent, item };
+      const row = this.recordTimeline(agent.id, item, {
+        timestamp: sourceEvent.timestamp,
+        turnId: sourceEvent.turnId,
+        sourceSeq: sourceRow.seq,
+      });
       if (deferredBroadcast) {
         timelineEvents.push({ event, row });
       } else if (broadcast) {
@@ -4283,7 +4411,7 @@ export class AgentManager {
     event: AgentStreamEvent,
     options?: HandleStreamEventOptions,
   ): Promise<boolean> {
-    event = limitAgentStreamEventContent(event);
+    if (event.type !== "timeline") event = limitAgentStreamEventContent(event);
     const identified = attachManagedTurnIdentity(agent, event, options?.fromHistory === true);
     event = identified.event;
     const eventTurnId = identified.turnId;
@@ -4528,36 +4656,53 @@ export class AgentManager {
   }): Promise<void> {
     const { agent, event, options, flags } = params;
 
-    const item = projectAgentMessage(event.item);
-    if (!item) {
-      flags.shouldDispatchEvent = false;
-      flags.shouldNotifyWaiters = false;
-      return;
-    }
-
-    event.item = item;
+    const original = event.item;
+    const item = projectAgentMessage(original);
     if (
-      event.item.type === "user_message" &&
-      event.item.clientMessageId &&
-      this.reconcileSubmittedPromptEcho(agent, event.item, event.turnId)
+      item?.type === "user_message" &&
+      item.clientMessageId &&
+      this.reconcileSubmittedPromptEcho(agent, item, event.turnId, original)
     ) {
       flags.shouldDispatchEvent = false;
       flags.shouldNotifyWaiters = false;
       return;
     }
+    this.ensureTimelineSource(agent.id);
+    if (
+      original.type === "user_message" &&
+      original.clientMessageId &&
+      this.timelineSourceStore.getSubmittedUserMessage(agent.id, original.clientMessageId)
+    ) {
+      flags.shouldDispatchEvent = false;
+      flags.shouldNotifyWaiters = false;
+      return;
+    }
+    const sourceRow = this.recordTimelineSource(
+      agent.id,
+      original,
+      { timestamp: event.timestamp, turnId: event.turnId },
+      !options?.fromHistory,
+    );
+    if (!item) {
+      flags.shouldDispatchEvent = false;
+      flags.shouldNotifyWaiters = false;
+      return;
+    }
+    event.item = item;
 
     if (options?.fromHistory) {
-      this.recordTimeline(
-        agent.id,
-        event.item,
-        event.timestamp ? { timestamp: event.timestamp } : undefined,
-      );
+      this.recordTimeline(agent.id, event.item, {
+        timestamp: event.timestamp,
+        sourceSeq: sourceRow.seq,
+      });
       flags.shouldDispatchEvent = false;
       flags.shouldNotifyWaiters = false;
       return;
     }
 
-    this.recordAndDispatchTimelineItem(agent.id, event.item, event.provider, event.turnId);
+    this.recordAndDispatchTimelineItem(agent.id, event.item, event.provider, event.turnId, {
+      sourceSeq: sourceRow.seq,
+    });
     if (event.item.type === "user_message") {
       agent.lastUserMessageAt = new Date();
       this.emitState(agent);
@@ -4772,9 +4917,10 @@ export class AgentManager {
     item: AgentTimelineItem,
     provider: AgentProvider,
     turnId?: string,
-    options?: { providerMessageId?: string },
+    options?: { providerMessageId?: string; sourceSeq?: number },
   ): AgentStreamEvent {
     const row = this.recordTimeline(agentId, item, { ...options, turnId });
+    item = row.item;
     const event: AgentStreamEvent = {
       type: "timeline",
       item,
@@ -4809,22 +4955,26 @@ export class AgentManager {
     outcome: "accepted" | "rejected",
     options?: { messageId?: string; providerMessageId?: string; turnId?: string },
   ): void {
-    const item = projectAgentMessage({
+    const rawItem: AgentTimelineItem = {
       type: "user_message",
       text: submittedPromptText(prompt),
       clientMessageId,
       ...(options?.messageId ? { messageId: options.messageId } : {}),
-    });
-    if (!item) return;
+    };
+    const item = projectAgentMessage(rawItem);
+    if (!item) {
+      if (outcome === "accepted") this.recordTimelineSource(agent.id, rawItem, options);
+      return;
+    }
     // Human attempts stay in history on rejection; delivery notifications require acceptance.
     if (outcome === "rejected" && item.type !== "user_message") return;
-    this.recordSubmittedPromptItem(agent, item, options);
+    this.recordSubmittedPromptItem(agent, item, { ...options, sourceItem: rawItem });
   }
 
   private recordSubmittedPromptItem(
     agent: ActiveManagedAgent,
     item: AgentTimelineItem,
-    options?: { providerMessageId?: string; turnId?: string },
+    options?: { providerMessageId?: string; turnId?: string; sourceItem?: AgentTimelineItem },
   ): void {
     if (
       item.type === "user_message" &&
@@ -4834,13 +4984,18 @@ export class AgentManager {
       return;
     this.touchUpdatedAt(agent);
     if (item.type === "user_message") agent.lastUserMessageAt = new Date();
-    this.recordAndDispatchTimelineItem(agent.id, item, agent.provider, options?.turnId, options);
+    const sourceRow = this.recordTimelineSource(agent.id, options?.sourceItem ?? item, options);
+    this.recordAndDispatchTimelineItem(agent.id, item, agent.provider, options?.turnId, {
+      ...options,
+      sourceSeq: sourceRow.seq,
+    });
   }
 
   private reconcileSubmittedPromptEcho(
     agent: ActiveManagedAgent,
     item: Extract<AgentTimelineItem, { type: "user_message" }>,
     turnId?: string,
+    sourceItem?: AgentTimelineItem,
   ): AgentTimelineRow | null {
     const { clientMessageId, messageId } = item;
     if (!clientMessageId) return null;
@@ -4850,6 +5005,7 @@ export class AgentManager {
         agent,
         { ...item, messageId: clientMessageId },
         {
+          sourceItem,
           ...(messageId ? { providerMessageId: messageId } : {}),
           ...(turnId ? { turnId } : {}),
         },
@@ -4929,10 +5085,13 @@ export class AgentManager {
       timestamp?: string;
       providerMessageId?: string;
       turnId?: string;
+      sourceSeq?: number;
     },
   ): AgentTimelineRow {
+    const sourceSeq =
+      options?.sourceSeq ?? this.recordTimelineSource(agentId, item, options, true, true).seq;
     item = limitAgentTimelineItemContent(item);
-    const row = this.timelineStore.append(agentId, item, options);
+    const row = this.timelineStore.append(agentId, item, { ...options, seq: sourceSeq });
     this.enqueueDurableTimelineAppend(agentId, row);
     return row;
   }
@@ -5164,6 +5323,8 @@ export class AgentManager {
 
   private dispatch(event: AgentManagerEvent): void {
     for (const subscriber of this.subscribers) {
+      if (event.type === "agent_stream" && event.source && !subscriber.includeTimelineSource)
+        continue;
       if (
         subscriber.agentId &&
         event.type === "agent_stream" &&

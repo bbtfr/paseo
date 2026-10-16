@@ -3,7 +3,7 @@ import type {
   PluginTimelineItem,
   PluginTimelineTransformResult,
 } from "@getpaseo/plugin";
-import type { AgentTimelineItem } from "@getpaseo/protocol/agent-types";
+import type { AgentProvider, AgentTimelineItem } from "@getpaseo/protocol/agent-types";
 import type { InstalledPlugin } from "../types";
 
 export interface InstalledPluginTimelineItem extends PluginTimelineItem {
@@ -17,8 +17,17 @@ export interface TimelineItemTransformInput {
   sourceId: string;
 }
 
+export interface TimelineSourceTransformInput extends TimelineItemTransformInput {
+  /** The provider that emitted this source item, from the timeline event envelope. */
+  provider: AgentProvider;
+}
+
 export type TimelineItemTransform = (
   input: TimelineItemTransformInput,
+) => InstalledPluginTimelineItem[] | undefined;
+
+export type TimelineSourceTransform = (
+  input: TimelineSourceTransformInput,
 ) => InstalledPluginTimelineItem[] | undefined;
 
 function isTimelineData(value: unknown, ancestors: Set<object>): value is PluginTimelineData {
@@ -72,19 +81,45 @@ function parseTransformResult(value: unknown): PluginTimelineTransformResult {
 }
 
 export function transformTimelineItem(
-  input: TimelineItemTransformInput & { plugins: readonly InstalledPlugin[] },
+  input: (
+    | (TimelineItemTransformInput & { source?: false })
+    | (TimelineSourceTransformInput & { source: true })
+  ) & { plugins: readonly InstalledPlugin[]; agentId: string },
 ): InstalledPluginTimelineItem[] | undefined {
+  const sourceContext =
+    input.source === true ? { provider: input.provider, agentId: input.agentId } : undefined;
   for (const plugin of input.plugins) {
-    for (const transformer of plugin.timelineTransformers) {
+    for (const transformer of sourceContext
+      ? plugin.timelineSourceTransformers
+      : plugin.timelineTransformers) {
       if (transformer.query.itemType !== input.item.type) continue;
       try {
         const transform = transformer.transform as (input: {
           item: AgentTimelineItem;
           phase: "streaming" | "complete";
+          provider?: AgentProvider;
+          agentId?: string;
         }) => PluginTimelineTransformResult | undefined;
-        const output = transform({ item: input.item, phase: input.phase });
+        const output = sourceContext
+          ? transform({
+              item: input.item,
+              phase: input.phase,
+              provider: sourceContext.provider,
+              agentId: sourceContext.agentId,
+            })
+          : transform({ item: input.item, phase: input.phase });
         if (output === undefined) continue;
         const parsed = parseTransformResult(output);
+        if (
+          sourceContext &&
+          parsed.items.some((item) => {
+            const renderer = plugin.timelineRenderers.find(
+              (candidate) => candidate.kind === item.kind && candidate.version === item.version,
+            );
+            return !renderer || !renderer.schema.safeParse(item.data).success;
+          })
+        )
+          continue;
         return parsed.items.map((transformedItem, index) => ({
           type: "plugin",
           id: transformedItem.id ?? `${input.sourceId}/${index}`,

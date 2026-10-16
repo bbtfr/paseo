@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 import type { InstalledPlugin } from "../types";
@@ -25,6 +26,7 @@ function plugin(input: {
     clientSlashCommands: [],
     attachmentSources: [],
     themes: [],
+    timelineSourceTransformers: [],
     timelineTransformers: [
       {
         id: "report",
@@ -54,6 +56,7 @@ describe("plugin timeline transforms", () => {
       item: toolCall,
       phase: "complete",
       sourceId: "agent_tool_call-1",
+      agentId: "agent-1",
       plugins: [
         plugin({
           id: "reports",
@@ -89,6 +92,7 @@ describe("plugin timeline transforms", () => {
         item: toolCall,
         phase: "complete",
         sourceId: "agent_tool_call-1",
+        agentId: "agent-1",
         plugins: [plugin({ id: "reports", transform: () => undefined })],
       }),
     ).toBeUndefined();
@@ -100,6 +104,7 @@ describe("plugin timeline transforms", () => {
       item: toolCall,
       phase: "complete",
       sourceId: "agent_tool_call-1",
+      agentId: "agent-1",
       plugins: [
         plugin({ id: "first", transform: () => ({ items: [] }) }),
         plugin({ id: "second", transform: second }),
@@ -116,6 +121,7 @@ describe("plugin timeline transforms", () => {
       item: toolCall,
       phase: "complete",
       sourceId: "agent_tool_call-1",
+      agentId: "agent-1",
       plugins: [
         plugin({
           id: "broken",
@@ -144,6 +150,7 @@ describe("plugin timeline transforms", () => {
       item: toolCall,
       phase: "complete",
       sourceId: "agent_tool_call-1",
+      agentId: "agent-1",
       plugins: [
         plugin({
           id: "broken",
@@ -172,6 +179,7 @@ describe("plugin timeline transforms", () => {
       item: toolCall,
       phase: "complete",
       sourceId: "agent_tool_call-1",
+      agentId: "agent-1",
       plugins: [
         plugin({
           id: "reports",
@@ -203,6 +211,7 @@ describe("plugin timeline transforms", () => {
       item: { ...toolCall, status: "running" },
       phase: "streaming",
       sourceId: "agent_tool_call-1",
+      agentId: "agent-1",
       plugins: [plugin({ id: "reports", transform })],
     });
 
@@ -212,4 +221,86 @@ describe("plugin timeline transforms", () => {
     });
     expect(transformed?.[0]?.id).toBe("summary");
   });
+
+  it("passes provider and agentId to source transformers", () => {
+    const transform = vi.fn(() => ({ items: [] }));
+    const sourcePlugin = plugin({ id: "reports", transform });
+    sourcePlugin.timelineSourceTransformers = sourcePlugin.timelineTransformers;
+    sourcePlugin.timelineTransformers = [];
+
+    const transformed = transformTimelineItem({
+      item: toolCall,
+      phase: "complete",
+      sourceId: "source",
+      source: true,
+      provider: "codex",
+      agentId: "agent-1",
+      plugins: [sourcePlugin],
+    });
+
+    expect(transform).toHaveBeenCalledWith({
+      item: toolCall,
+      phase: "complete",
+      provider: "codex",
+      agentId: "agent-1",
+    });
+    expect(transformed).toEqual([]);
+  });
+});
+
+it("source transformers preserve first valid claim and fall back on errors or missing renderers", () => {
+  const broken = plugin({
+    id: "broken",
+    transform: () => {
+      throw new Error("broken");
+    },
+  });
+  const missing = plugin({
+    id: "missing",
+    transform: () => ({
+      items: [{ type: "plugin" as const, kind: "card", version: 1, data: { text: "x" } }],
+    }),
+  });
+  const invalid = plugin({
+    id: "invalid",
+    transform: () => ({
+      items: [{ type: "plugin" as const, kind: "card", version: 1, data: { text: 1 } }],
+    }),
+  });
+  const hidden = plugin({ id: "hidden", transform: () => ({ items: [] }) });
+  for (const candidate of [broken, missing, invalid, hidden]) {
+    candidate.timelineSourceTransformers = candidate.timelineTransformers;
+    candidate.timelineTransformers = [];
+  }
+  invalid.timelineRenderers = [
+    { kind: "card", version: 1, schema: z.object({ text: z.string() }), Component: () => null },
+  ];
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    expect(
+      transformTimelineItem({
+        item: toolCall,
+        phase: "complete",
+        sourceId: "source",
+        source: true,
+        provider: "codex",
+        agentId: "agent-1",
+        plugins: [broken, missing, invalid],
+      }),
+    ).toBeUndefined();
+    expect(
+      transformTimelineItem({
+        item: toolCall,
+        phase: "complete",
+        sourceId: "source",
+        source: true,
+        provider: "codex",
+        agentId: "agent-1",
+        plugins: [broken, missing, invalid, hidden],
+      }),
+    ).toEqual([]);
+    expect(toolCall.detail).toEqual({ type: "unknown", input: null, output: null });
+  } finally {
+    warn.mockRestore();
+  }
 });

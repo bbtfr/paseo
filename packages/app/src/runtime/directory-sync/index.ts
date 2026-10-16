@@ -407,7 +407,10 @@ export class DirectorySync {
   ): Promise<Awaited<ReturnType<DaemonClient["fetchAgentTimeline"]>>> {
     const { client } = this.requireOnline();
     const token = this.agents.captureTimeline(agentId);
-    const page = await fetchAgentTimelineOnce(client, agentId, request);
+    const page = await fetchAgentTimelineOnce(client, agentId, {
+      ...request,
+      source: client.supportsTimelineSource,
+    });
     if (page.agent && this.agents.submitTimelineAgent(token, page.agent)) {
       this.revision += 1;
       this.persistCheckpoint();

@@ -88,6 +88,13 @@ const PluginTimelineDataSchema: z.ZodType<PluginTimelineData> = z.lazy(() =>
 );
 
 const TimelineItemBaseShape = {
+  timelineSource: z
+    .object({
+      item: AgentTimelineItemPayloadSchema,
+      defaultItem: AgentTimelineItemPayloadSchema.nullable(),
+      provider: z.string(),
+    })
+    .optional(),
   id: z.string(),
   timelineCursor: TimelinePositionSchema.optional(),
   // COMPAT(active-turn-membership): absent on caches written before turn membership.
@@ -408,6 +415,7 @@ function deserializeTimeline(stored: StoredTimeline | null): CachedTimeline | nu
 function timelineBase(item: StreamItem) {
   return {
     id: item.id,
+    timelineSource: item.timelineSource,
     ...(item.timelineCursor ? { timelineCursor: item.timelineCursor } : {}),
     ...(item.turnId ? { turnId: item.turnId } : {}),
     timestamp: item.timestamp.toISOString(),
@@ -502,6 +510,7 @@ function deserializeTimelineItem(item: StoredTimelineItem): StreamItem {
   if (item.kind === "plugin") {
     return {
       id: item.id,
+      timelineSource: item.timelineSource,
       ...(item.timelineCursor ? { timelineCursor: item.timelineCursor } : {}),
       ...(item.turnId ? { turnId: item.turnId } : {}),
       timestamp: new Date(item.timestamp),
@@ -521,6 +530,7 @@ function deserializeBuiltinTimelineItem(
 ): StreamItem {
   const base = {
     id: item.id,
+    timelineSource: item.timelineSource,
     ...(item.timelineCursor ? { timelineCursor: item.timelineCursor } : {}),
     ...(item.turnId ? { turnId: item.turnId } : {}),
     timestamp: new Date(item.timestamp),

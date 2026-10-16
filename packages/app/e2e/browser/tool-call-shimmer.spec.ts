@@ -51,13 +51,23 @@ function getToolCallStatus(
 function replaceToolCallStatus(message: WebSocketMessage, status: string): string {
   const raw = typeof message === "string" ? message : message.toString("utf8");
   const envelope = JSON.parse(raw) as {
-    message?: { payload?: { event?: { item?: { status?: string } } } };
+    message?: {
+      payload?: {
+        event?: {
+          item?: { status?: string };
+          source?: { defaultItem?: { status?: string } | null };
+        };
+      };
+    };
   };
   const item = envelope.message?.payload?.event?.item;
   if (!item) {
     throw new Error("Expected a tool-call session message");
   }
   item.status = status;
+  // Source-aware clients render the native fallback carried with the source.
+  const fallback = envelope.message?.payload?.event?.source?.defaultItem;
+  if (fallback) fallback.status = status;
   return JSON.stringify(envelope);
 }
 

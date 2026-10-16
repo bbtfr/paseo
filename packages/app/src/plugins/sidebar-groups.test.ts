@@ -36,6 +36,7 @@ function installed(
     attachmentSources: [],
     themes: [],
     timelineTransformers: [],
+    timelineSourceTransformers: [],
     timelineRenderers: [],
   };
 }

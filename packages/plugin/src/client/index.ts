@@ -23,6 +23,7 @@ export type {
   PluginScreenTitle,
   PluginSidebarContribution,
   PluginTimelineTransformerContribution,
+  PluginTimelineSourceTransformerContribution,
   PluginTimelineItemProps,
   PluginTimelineRendererContribution,
   PluginCommandCapabilities,
