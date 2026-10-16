@@ -56,6 +56,7 @@ describe("plugin timeline transforms", () => {
       item: toolCall,
       phase: "complete",
       sourceId: "agent_tool_call-1",
+      agentId: "agent-1",
       plugins: [
         plugin({
           id: "reports",
@@ -91,6 +92,7 @@ describe("plugin timeline transforms", () => {
         item: toolCall,
         phase: "complete",
         sourceId: "agent_tool_call-1",
+        agentId: "agent-1",
         plugins: [plugin({ id: "reports", transform: () => undefined })],
       }),
     ).toBeUndefined();
@@ -102,6 +104,7 @@ describe("plugin timeline transforms", () => {
       item: toolCall,
       phase: "complete",
       sourceId: "agent_tool_call-1",
+      agentId: "agent-1",
       plugins: [
         plugin({ id: "first", transform: () => ({ items: [] }) }),
         plugin({ id: "second", transform: second }),
@@ -118,6 +121,7 @@ describe("plugin timeline transforms", () => {
       item: toolCall,
       phase: "complete",
       sourceId: "agent_tool_call-1",
+      agentId: "agent-1",
       plugins: [
         plugin({
           id: "broken",
@@ -146,6 +150,7 @@ describe("plugin timeline transforms", () => {
       item: toolCall,
       phase: "complete",
       sourceId: "agent_tool_call-1",
+      agentId: "agent-1",
       plugins: [
         plugin({
           id: "broken",
@@ -174,6 +179,7 @@ describe("plugin timeline transforms", () => {
       item: toolCall,
       phase: "complete",
       sourceId: "agent_tool_call-1",
+      agentId: "agent-1",
       plugins: [
         plugin({
           id: "reports",
@@ -205,6 +211,7 @@ describe("plugin timeline transforms", () => {
       item: { ...toolCall, status: "running" },
       phase: "streaming",
       sourceId: "agent_tool_call-1",
+      agentId: "agent-1",
       plugins: [plugin({ id: "reports", transform })],
     });
 
@@ -213,6 +220,31 @@ describe("plugin timeline transforms", () => {
       phase: "streaming",
     });
     expect(transformed?.[0]?.id).toBe("summary");
+  });
+
+  it("passes provider and agentId to source transformers", () => {
+    const transform = vi.fn(() => ({ items: [] }));
+    const sourcePlugin = plugin({ id: "reports", transform });
+    sourcePlugin.timelineSourceTransformers = sourcePlugin.timelineTransformers;
+    sourcePlugin.timelineTransformers = [];
+
+    const transformed = transformTimelineItem({
+      item: toolCall,
+      phase: "complete",
+      sourceId: "source",
+      source: true,
+      provider: "codex",
+      agentId: "agent-1",
+      plugins: [sourcePlugin],
+    });
+
+    expect(transform).toHaveBeenCalledWith({
+      item: toolCall,
+      phase: "complete",
+      provider: "codex",
+      agentId: "agent-1",
+    });
+    expect(transformed).toEqual([]);
   });
 });
 
@@ -251,6 +283,8 @@ it("source transformers preserve first valid claim and fall back on errors or mi
         phase: "complete",
         sourceId: "source",
         source: true,
+        provider: "codex",
+        agentId: "agent-1",
         plugins: [broken, missing, invalid],
       }),
     ).toBeUndefined();
@@ -260,6 +294,8 @@ it("source transformers preserve first valid claim and fall back on errors or mi
         phase: "complete",
         sourceId: "source",
         source: true,
+        provider: "codex",
+        agentId: "agent-1",
         plugins: [broken, missing, invalid, hidden],
       }),
     ).toEqual([]);

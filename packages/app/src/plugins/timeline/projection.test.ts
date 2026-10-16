@@ -192,7 +192,9 @@ describe("plugin timeline source projection", () => {
     expect(projectPluginTimelineSourceItems(state, take)).toMatchObject([
       { kind: "plugin", data: { text: raw.text }, timelineCursor: { epoch: "epoch", seq: 1 } },
     ]);
-    expect(take).toHaveBeenCalledWith(expect.objectContaining({ item: raw, phase: "complete" }));
+    expect(take).toHaveBeenCalledWith(
+      expect.objectContaining({ item: raw, phase: "complete", provider: "claude" }),
+    );
     expect(projectPluginTimelineSourceItems(state, pass)).toEqual([]);
     expect(state[0]?.timelineSource?.item).toEqual(raw);
   });

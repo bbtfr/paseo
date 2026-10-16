@@ -27,6 +27,7 @@ import {
   type PluginSidebarItemContribution,
   type PluginSurfaceProps,
   type PluginTimelineRendererContribution,
+  type PluginTimelineSourceTransformerContribution,
   type PluginTimelineTransformerContribution,
   type PluginWorkspacePanelContribution,
   type PluginButtonRegistration,
@@ -137,8 +138,13 @@ export function runPluginClientBundle(
   const timelineSourceTransformerIds = new Set<string>();
   const timelineRendererIds = new Set<string>();
   function registerTimelineTransformer(
-    contribution: PluginTimelineTransformerContribution,
-    contributions: PluginTimelineTransformerContribution[],
+    contribution:
+      | PluginTimelineTransformerContribution
+      | PluginTimelineSourceTransformerContribution,
+    contributions: (
+      | PluginTimelineTransformerContribution
+      | PluginTimelineSourceTransformerContribution
+    )[],
     ids: Set<string>,
   ): PluginCleanup {
     const normalizedId = requireId(contribution.id, "timeline transformer id");
@@ -412,7 +418,7 @@ export function runPluginClientBundle(
       themeIds.add(normalizedId);
       return register(collector.themes, theme, () => themeIds.delete(normalizedId));
     },
-    addTimelineSourceTransformer(contribution: PluginTimelineTransformerContribution) {
+    addTimelineSourceTransformer(contribution: PluginTimelineSourceTransformerContribution) {
       return registerTimelineTransformer(
         contribution,
         collector.timelineSourceTransformers,

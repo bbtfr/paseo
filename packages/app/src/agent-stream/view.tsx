@@ -374,8 +374,12 @@ const AgentStreamViewComponent = forwardRef<AgentStreamViewHandle, AgentStreamVi
 
     // Get serverId (fallback to agent's serverId if not provided)
     const resolvedServerId = serverId ?? context.serverId ?? "";
-    const transformTimelineItem = useInstalledTimelineTransform(resolvedServerId);
-    const transformTimelineSourceItem = useInstalledTimelineTransform(resolvedServerId, true);
+    const transformTimelineItem = useInstalledTimelineTransform(resolvedServerId, agentId);
+    const transformTimelineSourceItem = useInstalledTimelineTransform(
+      resolvedServerId,
+      agentId,
+      true,
+    );
 
     const client = useSessionStore((state) => state.sessions[resolvedServerId]?.client ?? null);
     const sessionStreamHead = useSessionStore((state) =>

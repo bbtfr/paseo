@@ -6,7 +6,7 @@ import {
   type PluginTimelineStreamItem,
   type StreamItem,
 } from "@/types/stream";
-import type { TimelineItemTransform } from "./model";
+import type { TimelineItemTransform, TimelineSourceTransform } from "./model";
 
 type AssistantPhase = "streaming" | "complete";
 
@@ -155,14 +155,14 @@ interface SourceProjection {
   items: StreamItem[];
 }
 const sourceProjectionCache = new WeakMap<
-  TimelineItemTransform,
+  TimelineSourceTransform,
   WeakMap<StreamItem, Partial<Record<AssistantPhase, SourceProjection>>>
 >();
 
 function projectRetainedSourceItem(
   item: StreamItem,
   source: NonNullable<StreamItem["timelineSource"]>,
-  transform: TimelineItemTransform,
+  transform: TimelineSourceTransform,
   assistantPhase: AssistantPhase,
 ): SourceProjection {
   const event = source.defaultItem && {
@@ -175,7 +175,12 @@ function projectRetainedSourceItem(
   let phase: AssistantPhase = "complete";
   if (raw.type === "tool_call" && raw.status === "running") phase = "streaming";
   else if (raw.type === "assistant_message" || raw.type === "reasoning") phase = assistantPhase;
-  const output = transform({ item: cloneAndFreeze(raw), phase, sourceId: item.id });
+  const output = transform({
+    item: cloneAndFreeze(raw),
+    phase,
+    sourceId: item.id,
+    provider: source.provider,
+  });
   if (output === undefined) {
     let native = event
       ? reduceStreamUpdate([], event, item.timestamp, {
@@ -238,7 +243,7 @@ function shouldMergeNativeSourceProjection(
 
 export function projectPluginTimelineSourceItems(
   items: StreamItem[],
-  transform: TimelineItemTransform,
+  transform: TimelineSourceTransform,
   assistantPhase: AssistantPhase = "complete",
 ): StreamItem[] {
   let cache = sourceProjectionCache.get(transform);

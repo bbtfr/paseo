@@ -1,5 +1,5 @@
 import type { AssistantMessageItem, StreamItem, UserMessageItem } from "@/types/stream";
-import type { TimelineItemTransform } from "@/plugins/timeline/model";
+import type { TimelineItemTransform, TimelineSourceTransform } from "@/plugins/timeline/model";
 import {
   projectPluginTimelineItems,
   projectPluginTimelineSourceItems,
@@ -16,7 +16,7 @@ interface PresentationInput {
   tail: StreamItem[];
   head: StreamItem[];
   transform: TimelineItemTransform | undefined;
-  sourceTransform?: TimelineItemTransform;
+  sourceTransform?: TimelineSourceTransform;
   level: ToolCallDetailLevel;
   isTurnActive: boolean;
 }
@@ -79,7 +79,7 @@ export function createStreamPresentation() {
   let liveSources = new Map<string, AssistantMessageItem>();
   let historySource: StreamItem[] | undefined;
   let historyTransform: TimelineItemTransform | undefined;
-  let historySourceTransform: TimelineItemTransform | undefined;
+  let historySourceTransform: TimelineSourceTransform | undefined;
   let historyRows: StreamItem[] = [];
   let displayTail: StreamItem[] = [];
   let displayHistory: StreamItem[] | undefined;

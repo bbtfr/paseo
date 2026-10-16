@@ -577,8 +577,10 @@ Transformers run synchronously and must be deterministic. When several transform
 first one that returns a result owns that source item. Plugin and registration ordering is stable.
 See `plugin-examples/timeline-items` for the complete contract.
 
-Use `addTimelineSourceTransformer` with the same contribution type to inspect provider-normalized
-items before native display policy. It receives hidden `<paseo-system>` inputs and the original
+Use `addTimelineSourceTransformer` to inspect provider-normalized items before native display
+policy. Its contribution matches `addTimelineTransformer` except the transform input also carries
+`provider` (the provider that emitted the item) and `agentId`, so projections can specialize per
+provider. It receives hidden `<paseo-system>` inputs and the original
 agent-message envelope, and runs before client Todo conversion. Its result and renderer contract
 are identical to `addTimelineTransformer`; there is no separate action protocol. `undefined`, a
 throw, invalid data, or a missing renderer falls back to native display policy. `{ items: [] }`

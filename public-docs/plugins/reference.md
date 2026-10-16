@@ -1315,9 +1315,11 @@ assistant rows.
 
 ### Transform before native display policy
 
-`client.addTimelineSourceTransformer(contribution)` accepts the same
-`PluginTimelineTransformerContribution` as `addTimelineTransformer`: `id`, `query.itemType`,
-`transform({ item, phase })`, and `{ items } | undefined`. Reuse `addTimelineRenderer` for its output.
+`client.addTimelineSourceTransformer(contribution)` accepts a
+`PluginTimelineSourceTransformerContribution`: the same `id`, `query.itemType`, and
+`{ items } | undefined` contract as `addTimelineTransformer`, with a transform input of
+`{ item, phase, provider, agentId }`. `provider` is the provider that emitted the source item, and
+`agentId` matches the renderer props. Reuse `addTimelineRenderer` for its output.
 For example, a notification plugin can recognize the exact `<paseo-system>` envelope in a
 `user_message` before Paseo hides it, without replacing the agent provider.
 

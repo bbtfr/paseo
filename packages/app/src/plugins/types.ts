@@ -15,6 +15,7 @@ import type {
   PluginScreenContribution,
   PluginSettingsScreenContribution,
   PluginTimelineRendererContribution,
+  PluginTimelineSourceTransformerContribution,
   PluginTimelineTransformerContribution,
   PluginPanelLocation,
   PluginWorkspacePanelContribution,
@@ -41,7 +42,7 @@ export interface EvaluatedPlugin {
   attachmentSources: PluginAttachmentSourceContribution[];
   themes: PluginThemeContribution[];
   timelineTransformers: PluginTimelineTransformerContribution[];
-  timelineSourceTransformers: PluginTimelineTransformerContribution[];
+  timelineSourceTransformers: PluginTimelineSourceTransformerContribution[];
   timelineRenderers: PluginTimelineRendererContribution[];
 }
 
@@ -68,6 +69,7 @@ export type {
   PluginSettingsScreenContribution,
   PluginThemeContribution,
   PluginTimelineRendererContribution,
+  PluginTimelineSourceTransformerContribution,
   PluginTimelineTransformerContribution,
   PluginWorkspacePanelContribution,
 };
